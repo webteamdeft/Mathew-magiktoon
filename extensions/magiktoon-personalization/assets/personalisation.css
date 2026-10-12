@@ -1,0 +1,410 @@
+/*
+ * MagikToon Personalisation — product page block.
+ *
+ * Only the product-page call to action lives here. The customizer is a full
+ * page served by the app and carries its own styles, so there are no modal,
+ * stage or dropzone rules in this file.
+ *
+ * Everything is scoped under `.mtc` so nothing leaks into the host theme.
+ */
+
+.mtc {
+  --mtc-accent: #f4451d;
+  --mtc-accent-hover: #dc3c17;
+  --mtc-accent-soft: #fbd7cc;
+  --mtc-accent-text: #ffffff;
+
+  --mtc-ink: #101010;
+  --mtc-body: #5c5c5c;
+  --mtc-muted: #8c8c8c;
+
+  --mtc-surface: #ffffff;
+  --mtc-stage: #fdf4f1;
+  --mtc-border: #e4e4e4;
+  --mtc-success: #0f7b4f;
+  --mtc-success-soft: #e7f5ee;
+  --mtc-critical: #b42318;
+
+  --mtc-radius-card: 16px;
+  --mtc-radius-pill: 999px;
+
+  box-sizing: border-box;
+  color: var(--mtc-ink);
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 24px 0;
+}
+
+.mtc *,
+.mtc *::before,
+.mtc *::after {
+  box-sizing: inherit;
+}
+
+.mtc__cta {
+  display: grid;
+  gap: 16px;
+}
+
+/* ---------- Design chooser ---------- */
+
+.mtc__designs {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+}
+
+.mtc__design {
+  background: var(--mtc-surface);
+  border: 1.5px solid var(--mtc-border);
+  border-radius: 12px;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 8px;
+  justify-items: center;
+  padding: 10px;
+  text-align: center;
+}
+
+.mtc__design:hover {
+  border-color: var(--mtc-accent-soft);
+}
+
+.mtc__design[aria-checked="true"] {
+  border-color: var(--mtc-accent);
+  box-shadow: 0 0 0 1px var(--mtc-accent);
+}
+
+.mtc__design-image {
+  aspect-ratio: 1 / 1;
+  background: var(--mtc-stage);
+  border-radius: 8px;
+  display: block;
+  height: auto;
+  object-fit: contain;
+  width: 100%;
+}
+
+.mtc__design-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Selected Gelato template ---------- */
+
+.mtc__template {
+  align-items: center;
+  background: var(--mtc-stage);
+  border-radius: var(--mtc-radius-card);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 96px 1fr;
+  padding: 16px;
+}
+
+.mtc__template-image {
+  aspect-ratio: 1 / 1;
+  background: var(--mtc-surface);
+  border-radius: 12px;
+  display: block;
+  height: auto;
+  object-fit: contain;
+  width: 100%;
+}
+
+.mtc__template-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mtc__template-eyebrow {
+  color: var(--mtc-accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.mtc__template-name {
+  font-weight: 600;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mtc__template-meta {
+  color: var(--mtc-body);
+  font-size: 14px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Saved design ---------- */
+
+.mtc__saved {
+  align-items: center;
+  background: var(--mtc-success-soft);
+  border-radius: var(--mtc-radius-card);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 88px 1fr;
+  padding: 14px;
+}
+
+.mtc__saved-image {
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  display: block;
+  height: auto;
+  object-fit: cover;
+  width: 100%;
+}
+
+.mtc__saved-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mtc__saved-title {
+  color: var(--mtc-success);
+  font-weight: 700;
+  margin: 0;
+}
+
+.mtc__saved-meta {
+  color: var(--mtc-body);
+  font-size: 14px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Messages ---------- */
+
+.mtc__help {
+  color: var(--mtc-body);
+  font-size: 14px;
+  margin: 0;
+}
+
+.mtc__notice {
+  background: #fff6ec;
+  border-radius: 10px;
+  color: #8a4b12;
+  font-size: 14px;
+  margin: 0;
+  padding: 12px 14px;
+}
+
+.mtc__error {
+  color: var(--mtc-critical);
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ---------- Button ---------- */
+
+.mtc__button {
+  align-items: center;
+  border: 1.5px solid transparent;
+  border-radius: var(--mtc-radius-pill);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 52px;
+  padding: 14px 32px;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.mtc__button--primary {
+  background: var(--mtc-accent);
+  color: var(--mtc-accent-text);
+}
+
+.mtc__button--primary:hover {
+  background: var(--mtc-accent-hover);
+  color: var(--mtc-accent-text);
+}
+
+.mtc__button--block {
+  width: 100%;
+}
+
+/* ---------- Guarded theme button ---------- */
+
+.mtc-locked {
+  cursor: not-allowed !important;
+  opacity: 0.5 !important;
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 749px) {
+  .mtc__template {
+    grid-template-columns: 72px 1fr;
+  }
+
+  .mtc__saved {
+    grid-template-columns: 68px 1fr;
+  }
+}
+
+/* ---------- Product details ---------- */
+
+.mtc__details {
+  display: grid;
+  gap: 14px;
+}
+
+.mtc__product-title {
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.mtc__product-description {
+  color: var(--mtc-body);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.mtc__price {
+  align-items: baseline;
+  display: flex;
+  gap: 10px;
+  margin: 0;
+}
+
+.mtc__price-was {
+  color: var(--mtc-muted);
+  font-size: 16px;
+}
+
+.mtc__price-now {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+/* ---------- Rating ---------- */
+
+.mtc__rating {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.mtc__stars {
+  color: #d5d5d5;
+  font-size: 18px;
+  letter-spacing: 1px;
+  line-height: 1;
+}
+
+.mtc__star.is-on {
+  color: #f5a623;
+}
+
+.mtc__rating-count {
+  color: var(--mtc-body);
+  font-size: 14px;
+}
+
+/* ---------- Variant options ---------- */
+
+.mtc__option {
+  display: grid;
+  gap: 8px;
+}
+
+.mtc__option-name {
+  color: var(--mtc-body);
+  font-size: 14px;
+  margin: 0;
+}
+
+.mtc__option-name strong {
+  color: var(--mtc-ink);
+}
+
+.mtc__option-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mtc__option-value {
+  background: var(--mtc-surface);
+  border: 1.5px solid var(--mtc-border);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  min-height: 40px;
+  padding: 8px 16px;
+}
+
+.mtc__option-value:hover {
+  border-color: var(--mtc-accent);
+}
+
+.mtc__option-value.is-selected {
+  border-color: var(--mtc-ink);
+  border-width: 2px;
+  font-weight: 600;
+}
+
+/* An option combination this product does not sell. */
+.mtc__option-value.is-unavailable {
+  color: var(--mtc-muted);
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+/* ---------- Breadcrumb ---------- */
+
+.mtc__breadcrumb {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.mtc__breadcrumb-link {
+  color: var(--mtc-accent);
+  text-decoration: none;
+}
+
+.mtc__breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+.mtc__breadcrumb-sep {
+  color: var(--mtc-muted);
+}
+
+.mtc__breadcrumb-current {
+  color: var(--mtc-ink);
+  font-weight: 600;
+}
+
+/* ---------- Divider ---------- */
+
+.mtc__rule {
+  background: var(--mtc-border);
+  border: 0;
+  height: 1px;
+  margin: 6px 0;
+  width: 100%;
+}
+

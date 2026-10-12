@@ -1,0 +1,21 @@
+# Theme Check configuration for the MagikToon personalisation app block.
+#
+# Inherits every default check for theme app extensions; only the JavaScript
+# size threshold is relaxed.
+extends: theme-app-extension
+
+# personalisation.js is ~19KB unminified, roughly 5KB over the wire once
+# gzipped. On the product page it renders the product detail and variant
+# picker, fetches the Gelato designs mapped to the product, restores a design
+# saved earlier, and keeps add-to-cart locked until one exists. The editor
+# itself lives on its own page and is not loaded here.
+#
+# The threshold went 10000 -> 16000 -> 20000 -> 24000 as scope grew, and has
+# now come back DOWN to 22000: the theme-gallery swap was deleted when the
+# dedicated "Gelato template image" block superseded it, removing ~6KB. That is
+# the pattern to repeat — delete what a newer mechanism replaced — rather than
+# raising this number again. If it does need to grow, add a minification step
+# for extension assets first; that would roughly halve it.
+AssetSizeAppBlockJavaScript:
+  enabled: true
+  threshold_in_bytes: 22000

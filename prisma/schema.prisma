@@ -1,0 +1,526 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+model ProductConfiguration {
+  id               String  @id @default(cuid())
+  shop             String
+  shopifyProductId String
+  shopifyVariantId String?
+  productTitle     String
+  productHandle    String?
+  themeName        String
+
+  promptId         String?
+  aiModelId        String?
+  outputResolution String  @default("2K")
+  status           String  @default("DRAFT")
+
+  backgroundImageUrl     String?
+  placementAreas         Json?
+  editableTextEnabled    Boolean @default(false)
+  fixedTextConfiguration Json?
+
+  supplierSku           String?
+  printFileRequirements String?
+  mockupTemplate        String?
+  pricingRules          Json?
+  shippingRules         Json?
+
+  gelatoStoreId            String?
+  gelatoTemplateId         String?
+  gelatoProductId          String?
+  gelatoVariantId          String?
+  gelatoTemplateVariantId  String?
+  gelatoPlaceholderName    String?
+  gelatoPlacementArea      String?
+  gelatoTemplatePreviewUrl String?
+  gelatoProductStatus      String?
+  gelatoRawTemplate        Json?
+  gelatoRawProduct         Json?
+
+  storefrontEnabled     Boolean @default(false)
+  allowProductSelection Boolean @default(false)
+  sortOrder             Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prompt  Prompt?  @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  aiModel AiModel? @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+
+  gelatoTemplates GelatoTemplate[]
+  pendingOrders   PendingOrder[]
+  generationLogs  GenerationLog[]
+
+  @@unique([shop, shopifyProductId])
+  @@index([shop])
+  @@index([shop, status])
+  @@index([shop, storefrontEnabled])
+  @@index([promptId])
+  @@index([aiModelId])
+  @@index([gelatoTemplateId])
+}
+
+model Prompt {
+  id      String @id @default(cuid())
+  shop    String
+  name    String
+  content String
+  status  String @default("DRAFT")
+  version Int    @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productConfigurations ProductConfiguration[]
+  productMappings       ProductMapping[]
+
+  @@unique([shop, name])
+  @@index([shop])
+  @@index([shop, status])
+}
+
+model AiModel {
+  id            String  @id @default(cuid())
+  shop          String
+  provider      String  @default("GOOGLE_GEMINI")
+  name          String
+  modelKey      String
+  enabled       Boolean @default(true)
+  pricePerImage Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productConfigurations ProductConfiguration[]
+  productMappings       ProductMapping[]
+  generationLogs        GenerationLog[]
+
+  @@unique([shop, modelKey])
+  @@index([shop])
+  @@index([shop, enabled])
+}
+
+model GelatoTemplate {
+  id                     String @id @default(cuid())
+  shop                   String
+  productConfigurationId String
+
+  gelatoTemplateId        String
+  gelatoTemplateVariantId String?
+  gelatoProductId         String?
+  gelatoVariantId         String?
+
+  templateName        String?
+  templatePreviewUrl  String?
+  placeholderMapping  Json?
+  placementMapping    Json?
+  variants            Json?
+  rawTemplateResponse Json?
+  rawProductResponse  Json?
+
+  supplier  String  @default("GELATO")
+  enabled   Boolean @default(true)
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productConfiguration ProductConfiguration @relation(fields: [productConfigurationId], references: [id], onDelete: Cascade)
+
+  @@index([shop])
+  @@index([shop, gelatoTemplateId])
+  @@index([productConfigurationId])
+  @@index([shop, enabled])
+}
+
+/// Per-shop application settings.
+///
+/// One row per shop. Created on first read rather than at install, so a shop
+/// that has never opened the settings still behaves as the agreed default.
+model ShopSetting {
+  id   String @id @default(cuid())
+  shop String @unique
+
+  /// Hold each paid order for the Client to approve before it is sent to
+  /// Gelato (SOW section 4.3, Milestone 5).
+  ///
+  /// Defaults to ON because that is the agreed default in the assumptions:
+  /// "each paid order is held for the Client's review and is submitted to
+  /// Gelato only after the Client approves it". The Client can switch it off at
+  /// any time, and back on again — for example after changing the AI model.
+  orderReviewEnabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+}
+
+/// SUPERSEDED — not written to by any code.
+///
+/// An earlier design held orders for review in their own table. The review step
+/// is now a status on `GelatoOrderItem` instead, which reuses the duplicate
+/// protection, the retry machinery and the admin list that already exist rather
+/// than duplicating all three. Kept rather than dropped so no data is destroyed
+/// on an existing install; safe to remove once confirmed empty.
+model PendingOrder {
+  id                 String  @id @default(cuid())
+  shop               String
+  shopifyOrderId     String
+  shopifyOrderNumber String?
+  shopifyLineItemId  String?
+
+  productConfigurationId String?
+  gelatoTemplateId       String?
+  gelatoProductId        String?
+  gelatoVariantId        String?
+
+  customerEmail       String?
+  approvedMockupUrl   String?
+  printFileUrl        String?
+  artworkAssetId      String?
+  personalizationData Json?
+
+  status          String    @default("PENDING_REVIEW")
+  rejectionReason String?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productConfiguration ProductConfiguration? @relation(fields: [productConfigurationId], references: [id], onDelete: SetNull)
+
+  @@unique([shop, shopifyOrderId])
+  @@index([shop])
+  @@index([shop, status])
+  @@index([productConfigurationId])
+}
+
+model GenerationLog {
+  id                     String  @id @default(cuid())
+  shop                   String
+  productConfigurationId String?
+  productMappingId       String?
+  aiModelId              String?
+  shopifyOrderId         String?
+
+  generationType String @default("INITIAL")
+  status         String
+  durationMs     Int?
+  estimatedCost  Float?
+
+  // Denormalised on purpose (NFR-04 wants generation time broken down by
+  // product, model AND resolution). The resolution lives nowhere else once a
+  // mapping is edited, and `aiModelId` is set to null if the model row is ever
+  // deleted — which would silently rewrite history in the cost report.
+  modelKey   String?
+  resolution String?
+
+  inputAssetId  String?
+  outputAssetId String?
+  errorMessage  String?
+
+  createdAt DateTime @default(now())
+
+  productConfiguration ProductConfiguration? @relation(fields: [productConfigurationId], references: [id], onDelete: SetNull)
+  productMapping       ProductMapping?       @relation(fields: [productMappingId], references: [id], onDelete: SetNull)
+  aiModel              AiModel?              @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+
+  @@index([shop])
+  @@index([shop, status])
+  @@index([createdAt])
+  @@index([productConfigurationId])
+  @@index([productMappingId])
+  @@index([aiModelId])
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 3 — Shopify <-> Gelato product mapping, customer customization,
+// and Gelato fulfillment tracking.
+// ---------------------------------------------------------------------------
+
+model ProductMapping {
+  id   String @id @default(cuid())
+  shop String
+
+  shopifyProductId        String
+  shopifyProductNumericId String
+  shopifyVariantId        String?
+  shopifyVariantTitle     String?
+  shopifyProductTitle     String
+  shopifyProductHandle    String?
+  shopifyProductImageUrl  String?
+
+  gelatoProductId       String
+  gelatoProductName     String?
+  gelatoProductUid      String?
+  gelatoVariantId       String?
+  gelatoVariantName     String?
+  gelatoTemplateId      String
+  gelatoTemplateName    String?
+  gelatoPlaceholderName String  @default("ImageFront")
+  gelatoPrintAreaName   String  @default("front")
+
+  // Physical size of the placeholder as Gelato reports it, in the template's
+  // own units. Kept so the storefront can draw the print guide at the real
+  // aspect ratio instead of assuming a square or a circle: a mug placeholder
+  // can be 200 x 96, and cropping a customer's artwork to the wrong shape is
+  // invisible until the parcel arrives.
+  gelatoPlaceholderWidth  Float?
+  gelatoPlaceholderHeight Float?
+
+  // Where the print guide sits on the product photo, as fractions of it. This
+  // is presentation only — Gelato positions the artwork inside its own
+  // placeholder — but it has to look right, or the customer cannot judge what
+  // they are buying. Per mapping, because a mug, a tote and a canvas all put
+  // their printable area somewhere different.
+  printAreaX    Float @default(0.3)
+  printAreaY    Float @default(0.3)
+  printAreaSize Float @default(0.42)
+
+  // The template's editable text areas, as Gelato reports them:
+  // [{ name, defaultText, label }]. Stored so the storefront can render one
+  // input per area without calling Gelato on every page view, and so an order
+  // still knows the field names if the template is later changed.
+  gelatoTextPlaceholders Json?
+
+  // How many images Gelato has for this design. Stored rather than fetched so
+  // the storefront can render the right number of thumbnails immediately; each
+  // is served through /template-image/:id?i=N, which re-signs behind a stable
+  // path. Gelato's own URLs expire after 24 hours and must never be persisted.
+  gelatoImageCount Int @default(1)
+
+  // The template's layer stack: what sits where on the product, in what order,
+  // and which parts the customer may change. Gelato names the layers but gives
+  // no geometry, so position, size and text styling are configured in admin and
+  // stored here. See `app/lib/layers.js`.
+  layers Json?
+
+  gelatoPreviewUrl      String?
+  gelatoRawTemplate     Json?
+
+  // One Shopify product may offer several designs, so each mapping is a
+  // *design option* on that product rather than a replacement for it. These two
+  // fields are what the customer sees when choosing between them.
+  designLabel String?
+  sortOrder   Int     @default(0)
+
+  // Stable identity of the Gelato design this mapping points at:
+  // the template id, or `uid:<productUid>` on the catalog flow. Uniqueness is
+  // keyed on this rather than on the product, so a product can carry many
+  // designs while the same design cannot be added to it twice.
+  designRef String @default("")
+
+  status String @default("DRAFT")
+
+  // ---- Milestone 6: the optional background layer (SOW section 3.5) ----
+  //
+  // An image the admin uploads for a product where the design calls for one.
+  // Optional throughout: it can be added, changed or removed at any time, and
+  // the customer never chooses it.
+  //
+  // Only the storage key is kept, never a URL — the same rule the artwork
+  // follows, so a link cannot outlive its signature (NFR-09).
+  backgroundImageKey  String?
+  backgroundImageName String?
+
+  // Which of the template's image placeholders the background fills. Empty
+  // means the template supplies its own background and ours is unused.
+  backgroundPlaceholderName String?
+
+  // ---- Milestone 6: supplier attributes (FR-29) ----
+  //
+  // Stored where provided. These are Gelato's commercial facts about the
+  // product, recorded against the design so the Client has them in one place.
+  supplierSku           String?
+  printFileRequirements String?
+  mockupTemplate        String?
+  pricingRules          Json?
+  shippingRules         Json?
+
+  // ---- Milestone 4: AI generation settings for this design ----
+  //
+  // These live on the mapping rather than on ProductConfiguration because the
+  // storefront resolves a *mapping* when a customer opens a product page, and
+  // one product may offer several designs that each want their own prompt.
+  //
+  // All three are optional or defaulted, so every row written before Milestone
+  // 4 keeps working: it simply has nothing configured to generate with, which
+  // is the state it was already in.
+  promptId         String?
+  aiModelId        String?
+  outputResolution String  @default("2K")
+
+  // The shape asked of the AI, chosen by the merchant — never calculated.
+  //
+  // It was briefly derived from the print area, and the Client was right to
+  // reject that: the AI image is often only PART of the template. The Fashion
+  // Icon mug is a 200 x 96 mm template whose AI portion is 3:4, with text and
+  // fixed graphics filling the rest. Nothing in the print dimensions reveals
+  // that split, so a derived value is a guess dressed as a measurement.
+  //
+  // Null means send no aspect ratio at all, which is the pre-Milestone-4
+  // behaviour: the model follows the customer's photo.
+  aspectRatio String?
+
+  // How literally the model follows the prompt, and whether it repeats itself.
+  //
+  // Both were absent, which meant every request ran at the API default
+  // temperature of 1.0 — maximum variability. That is why a prompt saying "the
+  // cabin fills roughly the right 45-50% of the frame" produced a composition
+  // spread across the whole width, and why the same photo and prompt gave two
+  // different scenes on two runs.
+  //
+  // Null on both means send nothing and keep the model default, so every design
+  // written before these existed behaves exactly as it did.
+  //
+  // temperature: 0 follows the wording most literally, 2 is the most inventive.
+  // seed: any integer. The same seed, photo and prompt reproduce the same
+  // image, which is what makes refining a prompt possible — change one line
+  // and only that change shows.
+  temperature Float?
+  seed        Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prompt           Prompt?           @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  aiModel          AiModel?          @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+  customizations   Customization[]
+  gelatoOrderItems GelatoOrderItem[]
+  generationLogs   GenerationLog[]
+
+  @@unique([shop, shopifyProductId, designRef])
+  @@index([shop])
+  @@index([shop, status])
+  @@index([shop, shopifyProductNumericId])
+  @@index([shop, shopifyProductNumericId, status])
+}
+
+model Customization {
+  id   String @id @default(cuid())
+  shop String
+
+  productMappingId String?
+  shopifyProductId String
+  shopifyVariantId String?
+
+  artworkUrl String
+  artworkKey String?
+  previewUrl String?
+  previewKey String?
+
+  placement Json?
+
+  // How many AI generations produced the artwork the customer accepted
+  // (NFR-06). 1 is a first-time accept; higher means they regenerated. Zero on
+  // pre-Milestone-4 rows, where the upload itself was the artwork.
+  generationCount Int @default(0)
+
+  // The configuration that produced this approved design, frozen at the moment
+  // the customer accepted it (Milestone 6).
+  //
+  // The Gelato fields above are already a snapshot; this captures the rest —
+  // prompt name and version, model, resolution, background — so an admin who
+  // edits a design tomorrow cannot change what an order agreed to today. Read
+  // for display and audit, never to rebuild the order.
+  configSnapshot Json?
+
+  // Customer-entered text (Step 2 of the approved design). Passed through to
+  // Gelato Personalization Studio — never composited onto the artwork by this
+  // app (SOW 3.6 / FR-25).
+  personalizationText Json?
+
+  gelatoProductId       String?
+  gelatoProductUid      String?
+  gelatoVariantId       String?
+  gelatoTemplateId      String?
+  gelatoPlaceholderName String?
+  gelatoPrintAreaName   String?
+
+  status String @default("COMPLETE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productMapping   ProductMapping?   @relation(fields: [productMappingId], references: [id], onDelete: SetNull)
+  gelatoOrderItems GelatoOrderItem[]
+
+  @@index([shop])
+  @@index([shop, shopifyProductId])
+  @@index([productMappingId])
+}
+
+model GelatoOrderItem {
+  id   String @id @default(cuid())
+  shop String
+
+  shopifyOrderId    String
+  shopifyOrderName  String?
+  shopifyLineItemId String
+
+  customizationId  String?
+  productMappingId String?
+
+  gelatoOrderId          String?
+  gelatoOrderReferenceId String
+  gelatoOrderStatus      String?
+
+  status      String  @default("PENDING")
+  attempts    Int     @default(0)
+  lastError   String?
+  quantity    Int     @default(1)
+  artworkUrl  String?
+  previewUrl  String?
+
+  // Who released or declined this order at the review step, and when
+  // (Milestone 5). Null on rows that never went through review.
+  reviewedBy String?
+  reviewedAt DateTime?
+
+  requestPayload  Json?
+  responsePayload Json?
+
+  submittedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  customization  Customization?  @relation(fields: [customizationId], references: [id], onDelete: SetNull)
+  productMapping ProductMapping? @relation(fields: [productMappingId], references: [id], onDelete: SetNull)
+
+  @@unique([shop, shopifyOrderId, shopifyLineItemId])
+  @@index([shop])
+  @@index([shop, status])
+  @@index([shop, shopifyOrderId])
+  @@index([customizationId])
+}

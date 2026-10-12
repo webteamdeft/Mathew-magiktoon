@@ -1,0 +1,365 @@
+{% comment %}
+  MagikToon Personalisation — product page block
+
+  This block is deliberately small. It shows the Gelato template the current
+  product is mapped to, and sends the customer to a dedicated full-page
+  customizer at `/apps/<subpath>/customize`.
+
+  The editor is NOT a modal. A popup cannot be linked to or reloaded, loses its
+  state on a stray tap outside, and gives a design tool far too little room on a
+  phone. The full page is served by the app over the same app proxy and is
+  wrapped in this theme's own layout, so it reads as part of the store.
+
+  The block reads no Gelato configuration from theme settings — it asks the app
+  proxy which Gelato template the current product is mapped to.
+{% endcomment %}
+
+<div
+  class="mtc"
+  data-mtc-root
+  data-product-id="{{ product.id }}"
+  data-product-handle="{{ product.handle }}"
+  data-product-title="{{ product.title | escape }}"
+  data-product-type="{{ product.type | escape }}"
+  data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+  data-variant-title="{{ product.selected_or_first_available_variant.title | escape }}"
+  data-product-image="{{ product.featured_image | image_url: width: 1200 }}"
+  data-price="{{ product.selected_or_first_available_variant.price | money }}"
+  data-proxy-base="{{ block.settings.proxy_base | default: '/apps/magiktoon' }}"
+  data-block-required="{{ block.settings.require_customization }}"
+  data-show-saved-design="{{ block.settings.show_saved_design }}"
+  data-guard-message="{{ block.settings.guard_message | escape }}"
+  data-design-mode="{% if request.design_mode %}true{% else %}false{% endif %}"
+  style="
+    --mtc-accent: {{ block.settings.accent_color | default: '#F4451D' }};
+    --mtc-stage: {{ block.settings.stage_background | default: '#FDF4F1' }};
+  "
+  {%- comment -%}
+    Hidden on a live storefront until a mapping is found, so unmapped products
+    are untouched. Always visible in the theme editor, otherwise a merchant who
+    has just added the block sees nothing and assumes it failed to install.
+  {%- endcomment -%}
+  {% unless request.design_mode %}hidden{% endunless %}
+  {{ block.shopify_attributes }}
+>
+  <section class="mtc__cta" data-mtc-intro hidden>
+    {%- comment -%}
+      Product detail, matching the approved design: title, rating, price,
+      description and variant options above the personalisation controls.
+
+      Rendered from Liquid because every value is already on the page — no
+      request, and it keeps working if the app proxy is briefly unreachable.
+      Turn it off if the theme still renders its own product information.
+    {%- endcomment -%}
+    {%- if block.settings.show_breadcrumb -%}
+      <nav class="mtc__breadcrumb" aria-label="Breadcrumb">
+        <a class="mtc__breadcrumb-link" href="{{ routes.all_products_collection_url }}">
+          {{ block.settings.breadcrumb_root | default: 'All Products' }}
+        </a>
+        <span class="mtc__breadcrumb-sep" aria-hidden="true">/</span>
+        <span class="mtc__breadcrumb-current">{{ product.title }}</span>
+      </nav>
+    {%- endif -%}
+
+    {%- if block.settings.show_product_details -%}
+      <div class="mtc__details">
+        <h1 class="mtc__product-title">{{ product.title }}</h1>
+
+        {%- if block.settings.show_description and product.description != blank -%}
+          <div class="mtc__product-description">
+            {{ product.description | strip_html | truncatewords: 45 }}
+          </div>
+        {%- endif -%}
+
+        {%- if block.settings.show_price -%}
+          <p class="mtc__price">
+            {%- assign variant = product.selected_or_first_available_variant -%}
+            {%- if variant.compare_at_price > variant.price -%}
+              <s class="mtc__price-was">{{ variant.compare_at_price | money }}</s>
+            {%- endif -%}
+            <span class="mtc__price-now" data-mtc-price>{{ variant.price | money }}</span>
+          </p>
+        {%- endif -%}
+
+        {%- comment -%}
+          Rating from Shopify's standard review metafields. Apps that store a
+          rating elsewhere will not populate these, so the whole row is omitted
+          rather than showing zero stars.
+        {%- endcomment -%}
+        {%- assign rating = product.metafields.reviews.rating.value -%}
+        {%- assign rating_count = product.metafields.reviews.rating_count -%}
+        {%- if block.settings.show_rating and rating != blank -%}
+          <div class="mtc__rating">
+            <span class="mtc__stars" role="img"
+                  aria-label="{{ rating.rating }} out of {{ rating.scale_max }} stars">
+              {%- assign rounded = rating.rating | round -%}
+              {%- for i in (1..rating.scale_max) -%}
+                <span class="mtc__star{% if i <= rounded %} is-on{% endif %}">&#9733;</span>
+              {%- endfor -%}
+            </span>
+
+            {%- if rating_count > 0 -%}
+              <span class="mtc__rating-count">({{ rating_count }} Reviews)</span>
+            {%- endif -%}
+          </div>
+        {%- endif -%}
+
+        <hr class="mtc__rule">
+
+        {%- comment -%}
+          Variant options. Selecting one changes which variant the customizer
+          attaches the design to; the product itself never changes.
+        {%- endcomment -%}
+        {%- if block.settings.show_variants and product.has_only_default_variant == false -%}
+          {%- for option in product.options_with_values -%}
+            <div class="mtc__option" data-mtc-option="{{ forloop.index0 }}">
+              <p class="mtc__option-name">
+                {{ option.name }}{% if option.selected_value %} : <strong>{{ option.selected_value }}</strong>{% endif %}
+              </p>
+
+              <div class="mtc__option-values">
+                {%- for value in option.values -%}
+                  <button
+                    type="button"
+                    class="mtc__option-value{% if value == option.selected_value %} is-selected{% endif %}"
+                    data-mtc-option-value="{{ value | escape }}"
+                    data-option-index="{{ forloop.parentloop.index0 }}"
+                  >{{ value }}</button>
+                {%- endfor -%}
+              </div>
+            </div>
+          {%- endfor -%}
+
+          {%- comment -%} Variant data for the selector, as JSON. {%- endcomment -%}
+          <script type="application/json" data-mtc-variants>
+            [
+              {%- for v in product.variants -%}
+                {"id":{{ v.id }},"options":{{ v.options | json }},"available":{{ v.available }},"price":{{ v.price | json }}}{%- unless forloop.last -%},{%- endunless -%}
+              {%- endfor -%}
+            ]
+          </script>
+        {%- endif -%}
+      </div>
+    {%- endif -%}
+
+    {%- comment -%}
+      Design chooser, rendered only when this product offers more than one
+      Gelato design. Picking one changes the artwork template, never the
+      product or variant being purchased.
+    {%- endcomment -%}
+    <div class="mtc__designs" data-mtc-designs role="radiogroup"
+         aria-label="{{ block.settings.design_chooser_label | default: 'Choose a design' }}" hidden></div>
+
+    {%- comment -%}
+      The selected Gelato template, shown on the product page itself so the
+      customer can see what will be printed before deciding to customise.
+    {%- endcomment -%}
+    <div class="mtc__template" data-mtc-template
+         {% unless block.settings.show_template_card %}data-mtc-suppressed{% endunless %} hidden>
+      <img
+        class="mtc__template-image"
+        data-mtc-template-image
+        alt=""
+        width="240"
+        height="240"
+        loading="lazy"
+      >
+
+      <div class="mtc__template-body">
+        <p class="mtc__template-eyebrow">
+          {{ block.settings.template_eyebrow | default: 'Personalised print' }}
+        </p>
+        <p class="mtc__template-name" data-mtc-template-name></p>
+        <p class="mtc__template-meta" data-mtc-template-meta></p>
+      </div>
+    </div>
+
+    {% comment %}
+      No thumbnail strip here on purpose. Gelato publishes a product's mockups
+      to Shopify as product images, so the theme already draws the gallery under
+      the featured image. A second one in this panel is a duplicate.
+    {% endcomment %}
+
+    {%- comment -%} A design saved earlier in this browser. {%- endcomment -%}
+    <div class="mtc__saved" data-mtc-saved hidden>
+      <img
+        class="mtc__saved-image"
+        data-mtc-saved-image
+        alt="Your saved design"
+        width="176"
+        height="176"
+        loading="lazy"
+      >
+
+      <div class="mtc__saved-body">
+        <p class="mtc__saved-title">
+          {{ block.settings.saved_title | default: 'Your design is ready' }}
+        </p>
+        <p class="mtc__saved-meta" data-mtc-saved-meta></p>
+      </div>
+    </div>
+
+    <a class="mtc__button mtc__button--primary mtc__button--block" data-mtc-open href="#">
+      {{ block.settings.customize_button_label | default: 'Upload Image & Customise' }}
+    </a>
+
+    <p class="mtc__help" data-mtc-help>
+      {{ block.settings.helper_text | default: 'Add your own photo — you will see exactly what we print before you buy.' }}
+    </p>
+
+    <p class="mtc__notice" data-mtc-guard hidden></p>
+  </section>
+
+  {%- comment -%}
+    Shown only in the theme editor when the product has no active mapping, so
+    the merchant can tell "not set up yet" apart from "the block is broken".
+  {%- endcomment -%}
+  <p class="mtc__notice" data-mtc-setup-notice hidden></p>
+</div>
+
+{% schema %}
+{
+  "name": "MagikToon personalisation",
+  "target": "section",
+  "javascript": "personalisation.js",
+  "stylesheet": "personalisation.css",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Content"
+    },
+    {
+      "type": "text",
+      "id": "customize_button_label",
+      "label": "Product page button label",
+      "default": "Upload Photo & Customise"
+    },
+    {
+      "type": "text",
+      "id": "design_chooser_label",
+      "label": "Design chooser label",
+      "info": "Shown only when the product offers more than one Gelato design.",
+      "default": "Choose a design"
+    },
+    {
+      "type": "text",
+      "id": "template_eyebrow",
+      "label": "Template label",
+      "default": "Personalised print"
+    },
+    {
+      "type": "text",
+      "id": "saved_title",
+      "label": "Saved design title",
+      "default": "Your design is ready"
+    },
+    {
+      "type": "textarea",
+      "id": "helper_text",
+      "label": "Helper text",
+      "default": "Add your own photo — you will see exactly what we print before you buy."
+    },
+    {
+      "type": "text",
+      "id": "guard_message",
+      "label": "Add-to-cart guard message",
+      "default": "Please customise your photo before adding this product to your cart."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_breadcrumb",
+      "label": "Show the breadcrumb",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "breadcrumb_root",
+      "label": "Breadcrumb root label",
+      "default": "All Products"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_template_card",
+      "label": "Show the Gelato design summary card",
+      "info": "Off by default: the Gelato template image block already shows the design.",
+      "default": false
+    },
+    {
+      "type": "header",
+      "content": "Product details"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_product_details",
+      "label": "Show product details in this block",
+      "info": "Title, price, rating, description and variants. Turn off if the theme already renders them.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_description",
+      "label": "Show the description",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_price",
+      "label": "Show the price",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_rating",
+      "label": "Show the star rating",
+      "info": "Uses Shopify's standard review metafields. Hidden when a product has no rating.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_variants",
+      "label": "Show variant options",
+      "default": true
+    },
+    {
+      "type": "header",
+      "content": "Brand"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Accent colour",
+      "default": "#F4451D"
+    },
+    {
+      "type": "color",
+      "id": "stage_background",
+      "label": "Preview card background",
+      "default": "#FDF4F1"
+    },
+    {
+      "type": "header",
+      "content": "Behaviour"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_saved_design",
+      "label": "Show the saved design panel",
+      "info": "Off by default, as in the approved design. A saved design is still restored and still unlocks add to cart.",
+      "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "require_customization",
+      "label": "Block add to cart until a design is saved",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "proxy_base",
+      "label": "App proxy path",
+      "info": "Must match the app proxy prefix and subpath configured for this app.",
+      "default": "/apps/magiktoon"
+    }
+  ]
+}
+{% endschema %}

@@ -1,0 +1,54 @@
+import {
+  Outlet,
+  useLoaderData,
+} from "react-router";
+
+import {
+  AppProvider,
+} from "@shopify/polaris";
+
+import polarisTranslations from "@shopify/polaris/locales/en.json";
+
+import { authenticate } from "../shopify.server";
+
+export async function loader({ request }) {
+  await authenticate.admin(request);
+
+  return Response.json({
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+  });
+}
+
+export default function AppLayout() {
+  const { apiKey } = useLoaderData();
+
+  return (
+    <AppProvider i18n={polarisTranslations}>
+      <div
+        data-shopify-api-key={apiKey}
+        style={{
+          minHeight: "100vh",
+        }}
+      >
+        <nav
+          style={{
+            display: "flex",
+            gap: "16px",
+            padding: "14px 20px",
+            background: "#ffffff",
+            borderBottom: "1px solid #e1e3e5",
+          }}
+        >
+          <a href="/app">Home</a>
+          <a href="/app/products">Products</a>
+          <a href="/app/templates">
+            Gelato Templates
+          </a>
+          <a href="/app/prompts">Prompts</a>
+        </nav>
+
+        <Outlet />
+      </div>
+    </AppProvider>
+  );
+}

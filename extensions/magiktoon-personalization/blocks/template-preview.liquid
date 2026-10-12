@@ -1,0 +1,131 @@
+{% comment %}
+  MagikToon — Gelato template image
+
+  A standalone block whose only job is to show the Gelato design mapped to the
+  current Shopify product, at full size, wherever the merchant puts it. Intended
+  for the product page's main image column once the theme's own gallery has been
+  hidden.
+
+  Nothing here is hardcoded: the block asks the app proxy which design this
+  product is mapped to, and renders whatever comes back. A product with no
+  active mapping renders nothing at all, so the block is safe to add to a
+  shared product template.
+
+  It stays in step with the personalisation block: choosing a different design
+  there updates the image here, and a customer's own saved design replaces it
+  once they have one.
+{% endcomment %}
+
+<div
+  class="mtcv"
+  data-mtcv-root
+  data-product-id="{{ product.id }}"
+  data-proxy-base="{{ block.settings.proxy_base | default: '/apps/magiktoon' }}"
+  data-show-thumbnails="{{ block.settings.show_thumbnails }}"
+  data-side-by-side="{{ block.settings.side_by_side }}"
+  data-design-mode="{% if request.design_mode %}true{% else %}false{% endif %}"
+  {% unless request.design_mode %}hidden{% endunless %}
+  {{ block.shopify_attributes }}
+>
+  <div class="mtcv__frame" data-mtcv-frame>
+    <img
+      class="mtcv__image"
+      data-mtcv-image
+      alt="{{ product.title | escape }}"
+      width="1200"
+      height="1200"
+    >
+
+    <div class="mtcv__placeholder" data-mtcv-placeholder>
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.4"/>
+        <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+        <path d="M21 15l-5-5L5 21" stroke="currentColor" stroke-width="1.4"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  </div>
+
+  {%- comment -%}
+    A full gallery, as the approved design shows: the mapped Gelato design
+    first, then the product's own photography. Clicking a thumbnail shows it
+    large; clicking a design thumbnail also selects that design for printing.
+
+    The product photos are emitted here in Liquid rather than fetched, because
+    `product.images` is already on the page — no request, and nothing to break
+    if the app proxy is briefly unreachable.
+  {%- endcomment -%}
+  <div class="mtcv__thumbs" data-mtcv-thumbs role="radiogroup"
+       aria-label="{{ block.settings.thumbnails_label | default: 'Choose a design' }}" hidden>
+    {%- if block.settings.show_product_photos -%}
+      {%- for image in product.images limit: 8 -%}
+        <button
+          type="button"
+          class="mtcv__thumb"
+          role="radio"
+          aria-checked="false"
+          data-mtcv-photo="{{ image | image_url: width: 1200 }}"
+        >
+          <img
+            class="mtcv__thumb-image"
+            src="{{ image | image_url: width: 160 }}"
+            alt="{{ image.alt | default: product.title | escape }}"
+            width="160"
+            height="160"
+            loading="lazy"
+          >
+        </button>
+      {%- endfor -%}
+    {%- endif -%}
+  </div>
+
+  <p class="mtcv__notice" data-mtcv-notice hidden></p>
+</div>
+
+{% schema %}
+{
+  "name": "Gelato template image",
+  "target": "section",
+  "javascript": "template-preview.js",
+  "stylesheet": "template-preview.css",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Shows the Gelato design mapped to this product in the app. Place it where the theme's product gallery used to be."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_thumbnails",
+      "label": "Show a thumbnail strip",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_product_photos",
+      "label": "Include the product's own photos in the strip",
+      "info": "Off by default: the strip shows only the Gelato designs that can actually be printed.",
+      "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "side_by_side",
+      "label": "Place the customizer beside this image",
+      "info": "Puts the design image on the left and the customize form on the right when both blocks sit in the same column.",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "thumbnails_label",
+      "label": "Thumbnails label",
+      "default": "Choose a design"
+    },
+    {
+      "type": "text",
+      "id": "proxy_base",
+      "label": "App proxy path",
+      "info": "Must match the app proxy prefix and subpath configured for this app.",
+      "default": "/apps/magiktoon"
+    }
+  ]
+}
+{% endschema %}

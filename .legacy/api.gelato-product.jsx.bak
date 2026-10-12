@@ -1,0 +1,37 @@
+import { authenticate } from "../shopify.server";
+import { getGelatoProduct } from "../lib/gelato.server";
+
+export async function loader({ request }) {
+  await authenticate.admin(request);
+
+  const url = new URL(request.url);
+  const productId = url.searchParams.get("id");
+
+  if (!productId) {
+    return Response.json(
+      {
+        ok: false,
+        error: "Gelato product ID is required.",
+      },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const product =
+      await getGelatoProduct(productId);
+
+    return Response.json({
+      ok: true,
+      product,
+    });
+  } catch (error) {
+    return Response.json(
+      {
+        ok: false,
+        error: error.message,
+      },
+      { status: 502 }
+    );
+  }
+}

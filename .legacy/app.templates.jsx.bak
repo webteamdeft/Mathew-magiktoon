@@ -1,0 +1,568 @@
+import {
+  Page,
+  Card,
+  Text,
+  Banner,
+  InlineGrid,
+  BlockStack,
+  InlineStack,
+  Box,
+  Select,
+  FormLayout,
+  Button,
+  Divider,
+  Badge,
+  Thumbnail,
+} from "@shopify/polaris";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { useEffect, useState } from "react";
+import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
+
+const PRODUCT_TYPES = [
+  { label: "Mug", value: "mug" },
+  { label: "Tote", value: "tote" },
+  { label: "Canvas", value: "canvas" },
+];
+
+const PLACEHOLDERS = [
+  { label: "ImageFront", value: "ImageFront" },
+  { label: "ImageBack", value: "ImageBack" },
+];
+
+const PLACEMENT_AREAS = [
+  { label: "Front", value: "front" },
+  { label: "Back", value: "back" },
+];
+
+export function asArray(value) {
+  if (Array.isArray(value)) return value;
+
+  if (value && typeof value === "object") {
+    if (Array.isArray(value.items)) return value.items;
+    if (Array.isArray(value.products)) return value.products;
+    if (Array.isArray(value.data)) return value.data;
+    if (Array.isArray(value.nodes)) return value.nodes;
+    if (Array.isArray(value.edges)) return value.edges.map((edge) => edge?.node).filter(Boolean);
+  }
+
+  return [];
+}
+
+function getId(item) {
+  return String(item?.id || item?.productId || item?.productUid || item?.uid || "");
+}
+
+function getTemplateId(item) {
+  return String(item?.templateId || item?.template_id || item?.id || "");
+}
+
+function getProductId(item) {
+  return String(item?.productId || item?.productUid || item?.uid || item?.id || "");
+}
+
+function getTitle(item) {
+  return item?.title || item?.name || item?.productName || item?.productTitle || "Untitled product";
+}
+
+function getImage(item) {
+  const images = asArray(item?.images);
+
+  return (
+    item?.previewUrl ||
+    item?.imageUrl ||
+    item?.thumbnailUrl ||
+    item?.mockupUrl ||
+    item?.featuredImage?.url ||
+    item?.image?.url ||
+    images[0]?.url ||
+    images[0]?.originalSrc ||
+    images[0] ||
+    ""
+  );
+}
+
+function getVariants(item) {
+  return asArray(item?.variants);
+}
+
+function getFirstGelatoVariantId(item) {
+  const variant = getVariants(item)[0];
+
+  return String(item?.variantId || variant?.id || variant?.variantId || variant?.uid || "");
+}
+
+export async function loader({ request }) {
+  const { session } = await authenticate.admin(request);
+
+  const configurations = await prisma.productConfiguration.findMany({
+    where: { shop: session.shop },
+    include: { gelatoTemplates: { orderBy: { createdAt: "desc" }, take: 1 } },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  return Response.json({ configurations: asArray(configurations) });
+}
+
+export async function action({ request }) {
+  const { session } = await authenticate.admin(request);
+  const formData = await request.formData();
+
+  if (String(formData.get("intent") || "") !== "save-product") {
+    return Response.json({ ok: false, error: "Unknown action." }, { status: 400 });
+  }
+
+  const productType = String(formData.get("productType") || "").trim();
+  const shopifyProductId = String(formData.get("shopifyProductId") || "").trim();
+  const shopifyVariantId = String(formData.get("shopifyVariantId") || "").trim();
+  const shopifyProductTitle = String(formData.get("shopifyProductTitle") || "").trim();
+  const shopifyProductImage = String(formData.get("shopifyProductImage") || "").trim();
+  const gelatoProductId = String(formData.get("gelatoProductId") || "").trim();
+  const gelatoTemplateId = String(formData.get("gelatoTemplateId") || "").trim();
+  const gelatoProductTitle = String(formData.get("gelatoProductTitle") || "").trim();
+  const gelatoVariantId = String(formData.get("gelatoVariantId") || "").trim();
+  const previewUrl = String(formData.get("previewUrl") || "").trim();
+  const placeholderName = String(formData.get("placeholderName") || "ImageFront").trim();
+  const placementArea = String(formData.get("placementArea") || "front").trim();
+
+  if (!shopifyProductId || !gelatoTemplateId) {
+    return Response.json(
+      { ok: false, error: "Select one Shopify product and one Gelato template before saving." },
+      { status: 400 },
+    );
+  }
+
+  const configuration = await prisma.productConfiguration.upsert({
+    where: { shop_shopifyProductId: { shop: session.shop, shopifyProductId } },
+    update: {
+      productTitle: shopifyProductTitle || "Selected Shopify product",
+      themeName: productType,
+      backgroundImageUrl: shopifyProductImage || null,
+      gelatoProductId: gelatoProductId || gelatoTemplateId,
+      gelatoVariantId: gelatoVariantId || null,
+      gelatoTemplateId,
+      gelatoTemplateVariantId: gelatoVariantId || null,
+      gelatoPlaceholderName: placeholderName,
+      gelatoPlacementArea: placementArea,
+      gelatoTemplatePreviewUrl: previewUrl || null,
+    },
+    create: {
+      shop: session.shop,
+      shopifyProductId,
+      productTitle: shopifyProductTitle || "Selected Shopify product",
+      themeName: productType,
+      status: "DRAFT",
+      backgroundImageUrl: shopifyProductImage || null,
+      gelatoProductId: gelatoProductId || gelatoTemplateId,
+      gelatoVariantId: gelatoVariantId || null,
+      gelatoTemplateId,
+      gelatoTemplateVariantId: gelatoVariantId || null,
+      gelatoPlaceholderName: placeholderName,
+      gelatoPlacementArea: placementArea,
+      gelatoTemplatePreviewUrl: previewUrl || null,
+    },
+  });
+
+  await prisma.$executeRaw`
+    UPDATE "ProductConfiguration"
+    SET "shopifyVariantId" = ${shopifyVariantId || null}
+    WHERE "id" = ${configuration.id}
+  `;
+
+  await prisma.gelatoTemplate.deleteMany({
+    where: { productConfigurationId: configuration.id },
+  });
+
+  await prisma.gelatoTemplate.create({
+    data: {
+      shop: session.shop,
+      productConfigurationId: configuration.id,
+      gelatoTemplateId,
+      gelatoTemplateVariantId: gelatoVariantId || null,
+      gelatoProductId: gelatoProductId || gelatoTemplateId,
+      gelatoVariantId: gelatoVariantId || null,
+      templateName: gelatoProductTitle || "Selected Gelato template",
+      templatePreviewUrl: previewUrl || null,
+      placeholderMapping: { image: placeholderName },
+      placementMapping: { area: placementArea },
+      enabled: true,
+      isDefault: true,
+    },
+  });
+
+  return Response.json({ ok: true, message: "Product mapping saved successfully." });
+}
+
+export default function Templates() {
+  const { configurations: loadedConfigurations } = useLoaderData();
+  const actionData = useActionData();
+  const navigation = useNavigation();
+  const configurations = asArray(loadedConfigurations);
+
+  const [selectedShopifyProduct, setSelectedShopifyProduct] = useState(null);
+  const [selectedShopifyVariantId, setSelectedShopifyVariantId] = useState("");
+  const [gelatoTemplates, setGelatoTemplates] = useState([]);
+  const [gelatoSource, setGelatoSource] = useState("");
+  const [selectedGelatoTemplate, setSelectedGelatoTemplate] = useState(null);
+  const [gelatoLoading, setGelatoLoading] = useState(true);
+  const [gelatoError, setGelatoError] = useState("");
+  const [productType, setProductType] = useState("mug");
+  const [placeholderName, setPlaceholderName] = useState("ImageFront");
+  const [placementArea, setPlacementArea] = useState("front");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadGelatoTemplates() {
+      try {
+        setGelatoLoading(true);
+        setGelatoError("");
+
+        const response = await fetch("/app/api/gelato-templates");
+        const result = await response.json();
+
+        if (!response.ok || !result?.ok) {
+          throw new Error(result?.error || "Gelato templates could not be loaded.");
+        }
+
+        if (active) {
+          setGelatoTemplates(asArray(result.templates));
+          setGelatoSource(result.source || "");
+        }
+      } catch (error) {
+        if (active) setGelatoError(error.message || "Gelato templates could not be loaded.");
+      } finally {
+        if (active) setGelatoLoading(false);
+      }
+    }
+
+    loadGelatoTemplates();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function chooseShopifyProduct() {
+    if (!window.shopify?.resourcePicker) {
+      setGelatoError("Shopify Resource Picker is not available in this embedded app session.");
+      return;
+    }
+
+    const selection = await window.shopify.resourcePicker({
+      type: "product",
+      multiple: false,
+      action: "select",
+      filter: { hidden: false, variants: true },
+    });
+
+    const product = asArray(selection)[0];
+    if (!product) return;
+
+    const variants = getVariants(product);
+    setSelectedShopifyProduct(product);
+    setSelectedShopifyVariantId(String(variants[0]?.id || ""));
+  }
+
+  const shopifyVariants = getVariants(selectedShopifyProduct);
+  const shopifyProductId = getId(selectedShopifyProduct);
+  const shopifyProductTitle = selectedShopifyProduct ? getTitle(selectedShopifyProduct) : "";
+  const shopifyProductImage = getImage(selectedShopifyProduct);
+  const gelatoTemplateId = getTemplateId(selectedGelatoTemplate);
+  const gelatoProductId = getProductId(selectedGelatoTemplate);
+  const gelatoProductTitle = selectedGelatoTemplate ? getTitle(selectedGelatoTemplate) : "";
+  const gelatoProductImage = getImage(selectedGelatoTemplate);
+  const gelatoVariantId = getFirstGelatoVariantId(selectedGelatoTemplate);
+  const saving = navigation.state === "submitting";
+  const sortedGelatoTemplates = [...gelatoTemplates].sort((first, second) =>
+    getTitle(first).localeCompare(getTitle(second)),
+  );
+
+  const variantOptions = [
+    {
+      label: selectedShopifyProduct ? "Select a variant" : "Select a Shopify product first",
+      value: "",
+    },
+    ...shopifyVariants.map((variant) => ({
+      label: variant?.title || "Default title",
+      value: String(variant?.id || ""),
+    })),
+  ];
+
+  return (
+    <Page title="Product mappings" subtitle="Connect Shopify products to Gelato products without copying IDs.">
+      <div className="mt-page-shell">
+      <BlockStack gap="500">
+        <section className="mt-page-hero">
+          <div className="mt-hero-copy">
+            <Badge tone="success">Production mapping</Badge>
+            <h1>Connect Shopify products to Gelato templates</h1>
+            <p>
+              Pick a print template, choose the storefront product, then save the
+              placeholder and placement settings needed for fulfillment.
+            </p>
+          </div>
+          <div className="mt-hero-panel">
+            <BlockStack gap="100">
+              <Text as="p" tone="subdued">Saved mappings</Text>
+              <Text as="p" variant="heading2xl">{configurations.length}</Text>
+            </BlockStack>
+            <BlockStack gap="100">
+              <Text as="p" tone="subdued">Gelato catalog</Text>
+              <Text as="p" variant="headingMd">
+                {gelatoLoading ? "Loading" : `${sortedGelatoTemplates.length} templates`}
+              </Text>
+            </BlockStack>
+          </div>
+        </section>
+
+        {actionData?.message ? (
+          <Banner tone="success" title="Mapping saved">
+            {actionData.message}
+          </Banner>
+        ) : null}
+
+        {actionData?.error ? (
+          <Banner tone="critical" title="Could not save mapping">
+            {actionData.error}
+          </Banner>
+        ) : null}
+
+        {gelatoError ? (
+          <Banner tone="warning" title="Gelato catalog unavailable">
+            {gelatoError}
+          </Banner>
+        ) : null}
+
+        <Card>
+          <Form method="post">
+            <BlockStack gap="500">
+              <BlockStack gap="200">
+                <InlineStack align="space-between" blockAlign="center" gap="300">
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingLg">
+                      Create mapping
+                    </Text>
+                    <Text as="p" tone="subdued">
+                      Choose the Gelato template first, then connect it to the Shopify product.
+                    </Text>
+                  </BlockStack>
+                  <Badge tone="info">Sorted by template name</Badge>
+                </InlineStack>
+              </BlockStack>
+
+              <input type="hidden" name="intent" value="save-product" />
+              <input type="hidden" name="shopifyProductId" value={shopifyProductId} readOnly />
+              <input type="hidden" name="shopifyVariantId" value={selectedShopifyVariantId} readOnly />
+              <input type="hidden" name="shopifyProductTitle" value={shopifyProductTitle} readOnly />
+              <input type="hidden" name="shopifyProductImage" value={shopifyProductImage} readOnly />
+              <input type="hidden" name="gelatoProductId" value={gelatoProductId} readOnly />
+              <input type="hidden" name="gelatoVariantId" value={gelatoVariantId} readOnly />
+              <input type="hidden" name="gelatoProductTitle" value={gelatoProductTitle} readOnly />
+              <input type="hidden" name="previewUrl" value={gelatoProductImage} readOnly />
+
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center" gap="300">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Badge tone="success">Step 1</Badge>
+                    <Text as="h3" variant="headingMd">
+                      Gelato templates
+                    </Text>
+                  </InlineStack>
+                  {selectedGelatoTemplate ? <Badge tone="success">Template selected</Badge> : null}
+                </InlineStack>
+
+                {gelatoLoading ? (
+                  <Box padding="500" background="bg-surface-secondary">
+                    <Text as="p">Loading Gelato templates...</Text>
+                  </Box>
+                ) : null}
+
+                {!gelatoLoading && sortedGelatoTemplates.length === 0 ? (
+                  <Box padding="600" background="bg-surface-secondary" borderRadius="200">
+                    <BlockStack gap="200" inlineAlign="center">
+                      <Text as="p" variant="headingMd">
+                        No Gelato templates found
+                      </Text>
+                      <Text as="p" tone="subdued" alignment="center">
+                        Check the Gelato API key and store connection, then try again.
+                      </Text>
+                    </BlockStack>
+                  </Box>
+                ) : null}
+
+                {sortedGelatoTemplates.length > 0 ? (
+                  <InlineGrid columns={{ xs: 1, sm: 2, lg: 3 }} gap="400">
+                    {sortedGelatoTemplates.map((product) => {
+                      const productId = getId(product);
+                      const productTitle = getTitle(product);
+                      const productImage = getImage(product);
+                      const selected = productId === gelatoProductId;
+
+                      return (
+                        <Card key={productId || productTitle}>
+                          <div className="mt-product-card">
+                            {productImage ? (
+                              <img
+                                src={productImage}
+                                alt={productTitle}
+                                className="mt-product-preview"
+                              />
+                            ) : (
+                              <Box padding="600" background="bg-surface-secondary">
+                                <Text as="p" alignment="center" tone="subdued">
+                                  No preview available
+                                </Text>
+                              </Box>
+                            )}
+
+                            <BlockStack gap="100">
+                              <Text as="p" fontWeight="semibold">
+                                {productTitle}
+                              </Text>
+                              <Text as="p" tone="subdued">
+                                Gelato template
+                              </Text>
+                            </BlockStack>
+
+                            <Button variant={selected ? "primary" : "secondary"} onClick={() => setSelectedGelatoTemplate(product)}>
+                              {selected ? "Selected" : "Select template"}
+                            </Button>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </InlineGrid>
+                ) : null}
+              </BlockStack>
+
+              <Divider />
+
+              <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center" gap="300">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Badge>Step 2</Badge>
+                        <Text as="h3" variant="headingMd">
+                          Shopify product
+                        </Text>
+                      </InlineStack>
+                      <Button onClick={chooseShopifyProduct}>
+                        {selectedShopifyProduct ? "Change product" : "Choose product"}
+                      </Button>
+                    </InlineStack>
+
+                    {selectedShopifyProduct ? (
+                      <InlineStack gap="300" blockAlign="center">
+                        <Thumbnail source={shopifyProductImage || ""} alt={shopifyProductTitle} size="large" />
+                        <BlockStack gap="100">
+                          <Text as="p" fontWeight="semibold">
+                            {shopifyProductTitle}
+                          </Text>
+                          <Text as="p" tone="subdued">
+                            {shopifyVariants.length} variant{shopifyVariants.length === 1 ? "" : "s"} available
+                          </Text>
+                        </BlockStack>
+                      </InlineStack>
+                    ) : (
+                      <Box padding="500" background="bg-surface-secondary">
+                        <Text as="p" tone="subdued">
+                          No Shopify product selected.
+                        </Text>
+                      </Box>
+                    )}
+
+                    <Select
+                      label="Shopify variant"
+                      options={variantOptions}
+                      value={selectedShopifyVariantId}
+                      onChange={setSelectedShopifyVariantId}
+                      disabled={!selectedShopifyProduct}
+                    />
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack gap="200" blockAlign="center">
+                      <Badge>Step 3</Badge>
+                      <Text as="h3" variant="headingMd">
+                        Product settings
+                      </Text>
+                    </InlineStack>
+                    <FormLayout>
+                      <Select label="Product type" name="productType" options={PRODUCT_TYPES} value={productType} onChange={setProductType} />
+                      <Select label="Image placeholder" name="placeholderName" options={PLACEHOLDERS} value={placeholderName} onChange={setPlaceholderName} />
+                      <Select label="Placement area" name="placementArea" options={PLACEMENT_AREAS} value={placementArea} onChange={setPlacementArea} />
+                    </FormLayout>
+                  </BlockStack>
+                </Card>
+              </InlineGrid>
+
+              <InlineStack align="end">
+                <Button submit variant="primary" loading={saving} disabled={!shopifyProductId || !gelatoProductId || gelatoLoading}>
+                  Save product mapping
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </Form>
+        </Card>
+
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingLg">
+              Saved mappings
+            </Text>
+
+            {configurations.length === 0 ? (
+              <Box padding="600" background="bg-surface-secondary" borderRadius="200">
+                <BlockStack gap="200" inlineAlign="center">
+                  <Text as="p" variant="headingMd">
+                    No mappings saved
+                  </Text>
+                  <Text as="p" tone="subdued" alignment="center">
+                    Create a mapping above to connect Shopify products with Gelato products.
+                  </Text>
+                </BlockStack>
+              </Box>
+            ) : (
+              <BlockStack gap="300">
+                {configurations.map((configuration, index) => {
+                  const template = asArray(configuration.gelatoTemplates)[0];
+
+                  return (
+                    <Box key={configuration.id}>
+                      <InlineStack align="space-between" blockAlign="center" gap="400">
+                        <BlockStack gap="100">
+                          <Text as="p" fontWeight="semibold">
+                            {configuration.productTitle || "Untitled Shopify product"}
+                          </Text>
+                          <Text as="p" tone="subdued">
+                            Connected to {template?.templateName || configuration.gelatoProductId || "Gelato product"}
+                          </Text>
+                          <Text as="p" tone="subdued">
+                            Placement: {configuration.gelatoPlacementArea || "front"}
+                          </Text>
+                        </BlockStack>
+                        <Badge tone={configuration.status === "ACTIVE" ? "success" : "attention"}>
+                          {configuration.themeName || "mug"}
+                        </Badge>
+                      </InlineStack>
+                      {index < configurations.length - 1 ? (
+                        <Box paddingBlockStart="300">
+                          <Divider />
+                        </Box>
+                      ) : null}
+                    </Box>
+                  );
+                })}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Card>
+      </BlockStack>
+      </div>
+    </Page>
+  );
+}

@@ -1,0 +1,211 @@
+/*
+ * MagikToon — Gelato template image block.
+ *
+ * Sized to sit where a theme's product gallery was: fills its column, keeps a
+ * square frame so the page does not jump while the image loads.
+ *
+ * Scoped under `.mtcv` so nothing leaks into the host theme.
+ */
+
+.mtcv {
+  --mtcv-accent: #f4451d;
+  --mtcv-surface: #ffffff;
+  --mtcv-stage: #f6f6f6;
+  --mtcv-border: #e4e4e4;
+  --mtcv-muted: #8c8c8c;
+  --mtcv-radius: 12px;
+
+  box-sizing: border-box;
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
+.mtcv *,
+.mtcv *::before,
+.mtcv *::after {
+  box-sizing: inherit;
+}
+
+.mtcv__frame {
+  align-items: center;
+  aspect-ratio: 1 / 1;
+  background: var(--mtcv-stage);
+  border-radius: var(--mtcv-radius);
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.mtcv__image {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.mtcv__image[hidden] {
+  display: none;
+}
+
+/* Shown while the design loads, and if it ever fails to. */
+.mtcv__placeholder {
+  align-items: center;
+  color: var(--mtcv-muted);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+}
+
+.mtcv__placeholder[hidden] {
+  display: none;
+}
+
+/* ---------- Thumbnails ---------- */
+
+.mtcv__thumbs {
+  display: grid;
+  gap: 10px;
+  grid-auto-columns: 88px;
+  grid-auto-flow: column;
+  justify-content: start;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.mtcv__thumbs[hidden] {
+  display: none;
+}
+
+.mtcv__thumb {
+  background: var(--mtcv-surface);
+  border: 1.5px solid var(--mtcv-border);
+  border-radius: 10px;
+  cursor: pointer;
+  display: block;
+  padding: 4px;
+  width: 100%;
+}
+
+.mtcv__thumb:hover {
+  border-color: var(--mtcv-accent);
+}
+
+.mtcv__thumb[aria-checked="true"] {
+  border-color: var(--mtcv-accent);
+  box-shadow: 0 0 0 1px var(--mtcv-accent);
+}
+
+.mtcv__thumb-image {
+  aspect-ratio: 1 / 1;
+  background: var(--mtcv-stage);
+  border-radius: 6px;
+  display: block;
+  height: auto;
+  object-fit: contain;
+  width: 100%;
+}
+
+/* ---------- Theme editor notice ---------- */
+
+.mtcv__notice {
+  background: #fff6ec;
+  border-radius: 10px;
+  color: #8a4b12;
+  font-size: 14px;
+  margin: 0;
+  padding: 12px 14px;
+}
+
+.mtcv__notice[hidden] {
+  display: none;
+}
+
+@media (max-width: 749px) {
+  .mtcv__thumbs {
+    grid-auto-columns: 68px;
+  }
+}
+
+/* ---------- Two-column pairing ---------- */
+
+/*
+ * Created by template-preview.js when the design image and the customize form
+ * are siblings in one column. Placing them in separate theme columns is still
+ * fine — the wrapper is only added when they would otherwise stack.
+ */
+/*
+ * Outer element: measures the width the theme actually gives us, so the layout
+ * can collapse on CONTAINER width rather than viewport width. A theme that puts
+ * app blocks in a 480px column would otherwise get two unreadable columns on a
+ * wide screen.
+ */
+.mtcv-split {
+  container-type: inline-size;
+  width: 100%;
+}
+
+.mtcv-split__grid {
+  align-items: start;
+  display: grid;
+  gap: 48px;
+  /* Both halves are `minmax(0, …)` so a wide image or a long product title
+     cannot push its column past 50% and squeeze the other one. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* Themes often place app blocks inside a narrow single-column wrapper. Two
+     columns inside a 480px box is unreadable, so the pair is allowed to use the
+     full width its container offers. */
+  margin-inline: auto;
+  max-width: 100%;
+  width: 100%;
+}
+
+/* The blocks set their own margins for the stacked layout; side by side, the
+   grid gap owns the spacing. */
+.mtcv-split__grid > .mtcv,
+.mtcv-split__grid > .mtc {
+  margin: 0;
+  min-width: 0;
+}
+
+/* Fallback for browsers without container queries. */
+@media (max-width: 860px) {
+  .mtcv-split__grid {
+    gap: 32px;
+    grid-template-columns: 1fr;
+  }
+}
+
+@container (max-width: 860px) {
+  .mtcv-split__grid {
+    gap: 32px;
+    grid-template-columns: 1fr;
+  }
+}
+
+@container (min-width: 861px) {
+  /* The image follows the page while the detail column is read. */
+  .mtcv-split__grid > .mtcv {
+    position: sticky;
+    top: 24px;
+  }
+}
+
+/* ======================== */
+
+.product__info-wrapper.grid__item {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+
+.product__info-wrapper.grid__item product-info {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+.mtc__saved {
+  display:none !important;
+}

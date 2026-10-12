@@ -1,0 +1,52 @@
+import { authenticate } from "../shopify.server";
+import { listGelatoProducts } from "../lib/gelato.server";
+
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+
+  if (value && typeof value === "object") {
+    if (Array.isArray(value.items)) return value.items;
+    if (Array.isArray(value.products)) return value.products;
+    if (Array.isArray(value.data)) return value.data;
+    if (Array.isArray(value.nodes)) return value.nodes;
+  }
+
+  return [];
+}
+
+export async function loader({ request }) {
+  await authenticate.admin(request);
+
+  try {
+    const result =
+      await listGelatoProducts({
+        offset: 0,
+        limit: 100,
+      });
+
+    const products = asArray(result);
+    const normalizedProducts =
+      products.length > 0 ? products : asArray(result?.raw);
+
+    return Response.json({
+      ok: true,
+      products: normalizedProducts,
+    });
+  } catch (error) {
+    console.error(
+      "Gelato products error:",
+      error
+    );
+
+    return Response.json(
+      {
+        ok: false,
+        error:
+          error.message ||
+          "Gelato products could not be loaded.",
+        products: [],
+      },
+      { status: 502 }
+    );
+  }
+}

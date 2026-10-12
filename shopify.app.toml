@@ -1,0 +1,74 @@
+# Learn more about configuring your app:
+# https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "6ceb15510d9cb9d09adf1d9df1dfef41"
+name = "MagikPik"
+application_url = "https://edinburgh-dos-cameron-log.trycloudflare.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+[app_proxy]
+url = "https://edinburgh-dos-cameron-log.trycloudflare.com"
+prefix = "apps"
+subpath = "magiktoon"
+
+# Classic webhooks. `app/uninstalled` and `app/scopes_update` are mandatory,
+# and `orders/create` drives Milestone 3 fulfilment: every customized line item
+# is submitted to Gelato when an order is placed.
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = ["app/scopes_update"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = ["app/uninstalled"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/create"
+  topics = ["orders/create"]
+
+# Shopify CLI 4.x requires this section to exist even when empty. It configures
+# the newer resource-event API (topics such as `Order` and `Product`), which is
+# separate from the classic webhooks above and which this app does not use.
+#
+# `unstable` is the only value accepted here — the events API is not released —
+# so this deliberately does NOT track the api_version used for webhooks above.
+[events]
+api_version = "unstable"
+subscription = []
+
+[access_scopes]
+scopes = "write_app_proxy,write_products,write_metaobjects,write_metaobject_definitions,read_orders"
+
+[auth]
+redirect_urls = [
+  "https://edinburgh-dos-cameron-log.trycloudflare.com/api/auth"
+]
+
+[product.metafields.app.demo_info]
+type = "single_line_text_field"
+name = "Demo Source Info"
+description = "Tracks products created by the Shopify app template for development"
+
+  [product.metafields.app.demo_info.access]
+  admin = "merchant_read_write"
+
+[metaobjects.app.example]
+name = "Example"
+description = "An example metaobject definition created by this template"
+
+  [metaobjects.app.example.access]
+  admin = "merchant_read_write"
+
+[metaobjects.app.example.fields.title]
+name = "Title"
+type = "single_line_text_field"
+required = true
+
+[metaobjects.app.example.fields.description]
+name = "Description"
+type = "multi_line_text_field"

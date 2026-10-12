@@ -1,0 +1,222 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+model ProductConfiguration {
+  id               String  @id @default(cuid())
+  shop             String
+  shopifyProductId String
+  productTitle     String
+  productHandle    String?
+  themeName        String
+
+  promptId         String?
+  aiModelId        String?
+  outputResolution String  @default("2K")
+  status           String  @default("DRAFT")
+
+  backgroundImageUrl     String?
+  placementAreas         Json?
+  editableTextEnabled    Boolean @default(false)
+  fixedTextConfiguration Json?
+
+  supplierSku           String?
+  printFileRequirements String?
+  mockupTemplate        String?
+  pricingRules          Json?
+  shippingRules         Json?
+
+  gelatoStoreId            String?
+  gelatoTemplateId         String?
+  gelatoProductId          String?
+  gelatoVariantId          String?
+  gelatoTemplateVariantId  String?
+  gelatoPlaceholderName    String?
+  gelatoPlacementArea      String?
+  gelatoTemplatePreviewUrl String?
+  gelatoProductStatus      String?
+  gelatoRawTemplate        Json?
+  gelatoRawProduct         Json?
+
+  storefrontEnabled     Boolean @default(false)
+  allowProductSelection Boolean @default(false)
+  sortOrder             Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prompt  Prompt?  @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  aiModel AiModel? @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+
+  gelatoTemplates GelatoTemplate[]
+  pendingOrders   PendingOrder[]
+  generationLogs  GenerationLog[]
+
+  @@unique([shop, shopifyProductId])
+  @@index([shop])
+  @@index([shop, status])
+  @@index([shop, storefrontEnabled])
+  @@index([promptId])
+  @@index([aiModelId])
+  @@index([gelatoTemplateId])
+}
+
+model Prompt {
+  id      String @id @default(cuid())
+  shop    String
+  name    String
+  content String
+  status  String @default("DRAFT")
+  version Int    @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productConfigurations ProductConfiguration[]
+
+  @@unique([shop, name])
+  @@index([shop])
+  @@index([shop, status])
+}
+
+model AiModel {
+  id            String  @id @default(cuid())
+  shop          String
+  provider      String  @default("GOOGLE_GEMINI")
+  name          String
+  modelKey      String
+  enabled       Boolean @default(true)
+  pricePerImage Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productConfigurations ProductConfiguration[]
+  generationLogs        GenerationLog[]
+
+  @@unique([shop, modelKey])
+  @@index([shop])
+  @@index([shop, enabled])
+}
+
+model GelatoTemplate {
+  id                     String @id @default(cuid())
+  shop                   String
+  productConfigurationId String
+
+  gelatoTemplateId        String
+  gelatoTemplateVariantId String?
+  gelatoProductId         String?
+  gelatoVariantId         String?
+
+  templateName        String?
+  templatePreviewUrl  String?
+  placeholderMapping  Json?
+  placementMapping    Json?
+  variants            Json?
+  rawTemplateResponse Json?
+  rawProductResponse  Json?
+
+  supplier  String  @default("GELATO")
+  enabled   Boolean @default(true)
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productConfiguration ProductConfiguration @relation(fields: [productConfigurationId], references: [id], onDelete: Cascade)
+
+  @@index([shop])
+  @@index([shop, gelatoTemplateId])
+  @@index([productConfigurationId])
+  @@index([shop, enabled])
+}
+
+model PendingOrder {
+  id                 String  @id @default(cuid())
+  shop               String
+  shopifyOrderId     String
+  shopifyOrderNumber String?
+  shopifyLineItemId  String?
+
+  productConfigurationId String?
+  gelatoTemplateId       String?
+  gelatoProductId        String?
+  gelatoVariantId        String?
+
+  customerEmail       String?
+  approvedMockupUrl   String?
+  printFileUrl        String?
+  artworkAssetId      String?
+  personalizationData Json?
+
+  status          String    @default("PENDING_REVIEW")
+  rejectionReason String?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productConfiguration ProductConfiguration? @relation(fields: [productConfigurationId], references: [id], onDelete: SetNull)
+
+  @@unique([shop, shopifyOrderId])
+  @@index([shop])
+  @@index([shop, status])
+  @@index([productConfigurationId])
+}
+
+model GenerationLog {
+  id                     String  @id @default(cuid())
+  shop                   String
+  productConfigurationId String?
+  aiModelId              String?
+  shopifyOrderId         String?
+
+  generationType String @default("INITIAL")
+  status         String
+  durationMs     Int?
+  estimatedCost  Float?
+
+  inputAssetId  String?
+  outputAssetId String?
+  errorMessage  String?
+
+  createdAt DateTime @default(now())
+
+  productConfiguration ProductConfiguration? @relation(fields: [productConfigurationId], references: [id], onDelete: SetNull)
+  aiModel              AiModel?              @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+
+  @@index([shop])
+  @@index([shop, status])
+  @@index([createdAt])
+  @@index([productConfigurationId])
+  @@index([aiModelId])
+}

@@ -1,0 +1,32 @@
+{% comment %}
+  MagikToon — the customer's own design in the cart.
+
+  An app embed rather than a section block: the cart is rendered by the theme
+  and by a drawer that can open on any page, so there is nowhere for a merchant
+  to place a block. This loads everywhere and does nothing until it finds a
+  cart line carrying one of our designs.
+{% endcomment %}
+
+<script>
+  window.MagikToonCart = {
+    proxyBase: {{ block.settings.proxy_base | default: '/apps/magiktoon' | json }}
+  };
+</script>
+
+<script src="{{ 'cart-mockup.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "MagikToon cart design",
+  "target": "body",
+  "settings": [
+    {
+      "type": "text",
+      "id": "proxy_base",
+      "label": "App proxy path",
+      "default": "/apps/magiktoon",
+      "info": "Only change this if the MagikToon app proxy was installed on a different path."
+    }
+  ]
+}
+{% endschema %}

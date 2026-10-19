@@ -8,6 +8,7 @@
  */
 
 import { asArray, firstString, toTrimmedString } from "./normalize.js";
+import { gelatoFieldLabel } from "./layers.js";
 
 const GELATO_ECOMMERCE_API = "https://ecommerce.gelatoapis.com/v1";
 
@@ -113,8 +114,10 @@ export function normalizeGelatoTextPlaceholder(placeholder) {
     name,
     // What the template ships with, and what prints if nobody edits it.
     defaultText: text,
-    // "Text 4" tells a customer nothing; the default wording does.
-    label: text ? text.split("\n")[0].slice(0, 40) : name,
+    // A name the designer chose ("Name", "Year") is the title. "Text 4" tells
+    // a customer nothing; the default wording does.
+    label:
+      gelatoFieldLabel(name) || (text ? text.split("\n")[0].slice(0, 40) : name),
   };
 }
 

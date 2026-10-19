@@ -1152,9 +1152,13 @@ const SCRIPT = `
     // mockup is never shown against artwork it does not belong to.
     generationId: "",
     mockup: null,
+    // Identifies the current preview request; see previewOnProduct.
+    mockupToken: 0,
     // 0 is the editable preview; 1..n are the template's other views.
     viewIndex: 0,
     rotateTimer: null,
+    // Step 4's mockup slideshow.
+    mockupTimer: null,
     placement: { x: 0.5, y: 0.5, zoom: 1 },
     saved: null,
     busy: false,
@@ -1402,7 +1406,9 @@ const SCRIPT = `
     if (!ui.previewProgress) return;
 
     var startedAt = Date.now();
-    var expected = 12000;
+    // The wrapped views come back in a few seconds; Gelato's live render
+    // follows separately and does not hold this bar up.
+    var expected = 8000;
 
     ui.previewProgress.hidden = false;
     setPreviewProgress(0);
@@ -2301,6 +2307,13 @@ const SCRIPT = `
 
   /** Every image this design has, the editable preview first. */
   function viewsOf() {
+    // Once previewed, the slider steps through the mockups instead.
+    if (state.mockup && state.mockup.views && state.mockup.views.length > 1) {
+      return state.mockup.views.map(function (url, index) {
+        return { index: index, url: url, mockup: true };
+      });
+    }
+
     var mapping = state.mapping;
     var paths = (mapping && mapping.imagePaths) || [];
 
@@ -2330,6 +2343,17 @@ const SCRIPT = `
 
     state.viewIndex = Math.max(0, Math.min(index, views.length - 1));
 
+    // Every mockup is shown in the mockup slot; none is adjustable.
+    if (views[0].mockup) {
+      hide(ui.viewImg);
+      if (ui.stage) ui.stage.classList.remove("is-viewing");
+      if (ui.mockupImg) ui.mockupImg.src = views[state.viewIndex].url;
+      if (ui.viewCount) {
+        ui.viewCount.textContent = state.viewIndex + 1 + " / " + views.length;
+      }
+      return;
+    }
+
     var isReference = state.viewIndex > 0;
 
     if (ui.viewImg) {
@@ -2358,6 +2382,8 @@ const SCRIPT = `
     if (views.length < 2) return;
 
     stopRotating();
+    // Stepping by hand ends the slideshow, so it doesn't jump away.
+    stopMockupAutoplay();
     showView((state.viewIndex + direction + views.length) % views.length);
   }
 
@@ -2406,27 +2432,68 @@ const SCRIPT = `
   function renderViews() {
     var views = viewsOf();
     var many = views.length > 1;
+    // Arrows and counter only on the product preview's mockups.
+    var arrows = many && Boolean(state.mockup);
 
     [ui.viewPrev, ui.viewNext, ui.viewCount].forEach(function (node) {
-      if (node) node.hidden = !many;
+      if (node) node.hidden = !arrows;
     });
 
     if (!many) {
       stopRotating();
+      stopMockupAutoplay();
       return;
     }
 
-    if (ui.viewCount) {
-      ui.viewCount.textContent = state.viewIndex + 1 + " / " + views.length;
+    if (state.mockup) {
+      startMockupAutoplay();
+    } else {
+      startRotating();
     }
+  }
 
-    startRotating();
+  /**
+   * Step 4's mockups play through on their own, like a slideshow, until the
+   * customer uses the arrows. Stops when the mockups are cleared.
+   */
+  function startMockupAutoplay() {
+    stopMockupAutoplay();
+
+    state.mockupTimer = setInterval(function () {
+      var views = viewsOf();
+
+      if (!state.mockup || views.length < 2) {
+        stopMockupAutoplay();
+        return;
+      }
+
+      showView((state.viewIndex + 1) % views.length);
+    }, 3000);
+  }
+
+  function stopMockupAutoplay() {
+    if (state.mockupTimer) {
+      clearInterval(state.mockupTimer);
+      state.mockupTimer = null;
+    }
   }
 
   function clearMockup() {
+    var hadMockup = Boolean(state.mockup);
+
     state.mockup = null;
+    stopMockupAutoplay();
+    // A live render still arriving for this design is no longer wanted.
+    state.mockupToken += 1;
 
     hide(ui.mockupImg);
+
+    // Back to the design's own views in the slider.
+    if (hadMockup) {
+      state.viewIndex = 0;
+      renderViews();
+      showView(0);
+    }
     hide(ui.mockupNote);
 
     if (ui.stage) ui.stage.classList.remove("is-mockup");
@@ -2475,72 +2542,172 @@ const SCRIPT = `
 
     var previewSucceeded = false;
 
-    fetch(DATA.mockupUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        productId: DATA.productId,
-        mappingId: state.mapping ? state.mapping.mappingId : "",
-        generationId: state.generationId,
-        text: readText()
-      })
-    })
-      .then(function (response) { return response.json(); })
+    // The AI artwork from Step 2 and the text from Step 3, exactly as they
+    // stand now. Gelato places both on the selected template.
+    var sentGenerationId = state.generationId;
+    var sentText = readText();
+    var requestBody = JSON.stringify({
+      productId: DATA.productId,
+      mappingId: state.mapping ? state.mapping.mappingId : "",
+      generationId: sentGenerationId,
+      text: sentText
+    });
+    // A little longer than the server's own render limit, so the server's
+    // answer — success or a specific error — is the one the customer sees.
+    var pollDeadline = Date.now() + 330000;
+    // Bumped by clearMockup: a live render for an abandoned design is dropped.
+    var token = ++state.mockupToken;
+
+    function stillCurrent() {
+      return (
+        token === state.mockupToken &&
+        state.generationId === sentGenerationId &&
+        JSON.stringify(readText()) === JSON.stringify(sentText)
+      );
+    }
+
+    function post(poll) {
+      return fetch(DATA.mockupUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: poll ? requestBody.replace(/^[{]/, '{"poll":true,') : requestBody
+      }).then(function (response) { return response.json(); });
+    }
+
+    // Gelato renders asynchronously, often for longer than the app proxy will
+    // hold a request open. The server keeps the render running and answers
+    // "pending"; asking again with the same body collects the same render.
+    function pollLiveRender() {
+      return post(true).then(function (payload) {
+        if (payload && payload.ok && payload.pending) {
+          if (Date.now() > pollDeadline || token !== state.mockupToken) {
+            return { ok: false, error: "The preview is taking too long. Please try again." };
+          }
+          return new Promise(function (resolve) {
+            window.setTimeout(resolve, 3000);
+          }).then(pollLiveRender);
+        }
+        return payload;
+      });
+    }
+
+    /** Put a set of mockups in the slider on the left. Resolves once shown. */
+    function showMockups(payload, live) {
+      var urls = (payload.mockups || []).map(function (item) { return item.url; });
+      if (urls.length === 0) urls = [payload.mockup];
+
+      // The live render leads; the wrapped views stay as extra angles.
+      if (live && state.mockup && state.mockup.approximate) {
+        urls = urls.concat(state.mockup.views);
+      }
+
+      return new Promise(function (resolve) {
+        var resolved = false;
+
+        function finish() {
+          if (resolved) return;
+          resolved = true;
+
+          state.mockup = {
+            url: urls[0],
+            key: payload.mockupKey,
+            views: urls,
+            approximate: !live
+          };
+
+          stopRotating();
+          state.viewIndex = 0;
+          renderViews();
+          showView(0);
+
+          if (ui.stage) ui.stage.classList.add("is-mockup");
+
+          // Nothing to drag or zoom on a finished mockup.
+          enableControls(false);
+
+          if (ui.mockupNote) {
+            ui.mockupNote.textContent = live
+              ? "This is the actual product preview from our print partner. " +
+                "It is exactly what will be printed."
+              : "A preview of your design on the product. " +
+                "Our print partner's own render will appear here when it is ready.";
+            show(ui.mockupNote);
+          }
+          // A saved design no longer matches what is on screen.
+          state.saved = null;
+          hide(ui.savedBox);
+          updateCartButton();
+          resolve(true);
+        }
+
+        if (!ui.mockupImg) {
+          finish();
+          return;
+        }
+
+        ui.mockupImg.onload = finish;
+        ui.mockupImg.onerror = function () {
+          if (resolved) return;
+          resolved = true;
+          resolve(false);
+        };
+        ui.mockupImg.src = urls[0];
+        show(ui.mockupImg);
+
+        if (ui.mockupImg.complete && ui.mockupImg.naturalWidth > 0) {
+          finish();
+        }
+      });
+    }
+
+    /** Swap Gelato's live render in quietly, whenever it lands. */
+    function awaitLiveRender() {
+      pollLiveRender()
+        .then(function (payload) {
+          if (!payload || !payload.ok || !payload.mockup || payload.approximate) {
+            console.warn("[magiktoon] live render unavailable", payload && payload.error);
+            return;
+          }
+          if (!stillCurrent()) return;
+          showMockups(payload, true);
+        })
+        .catch(function (error) {
+          console.warn("[magiktoon] live render polling failed", error);
+        });
+    }
+
+    post(false)
       .then(function (payload) {
-        if (!payload || !payload.ok) {
+        // No wrapped views for this product: wait for the live render itself.
+        if (payload && payload.ok && payload.pending && !payload.mockup) {
+          return pollLiveRender();
+        }
+        return payload;
+      })
+      .then(function (payload) {
+        if (!payload || !payload.ok || !payload.mockup) {
           setError((payload && payload.error) || "The preview could not be created.");
           return;
         }
 
-        return new Promise(function (resolve) {
-          state.mockup = { url: payload.mockup, key: payload.mockupKey };
-          var resolved = false;
+        // The customer changed the artwork or the text while it rendered:
+        // this mockup no longer shows what would be bought.
+        if (!stillCurrent()) {
+          setError("Your design changed — preview it on the product again.");
+          return;
+        }
 
-          function finish() {
-            if (resolved) return;
-            resolved = true;
-            previewSucceeded = true;
-
-            stopRotating();
-            showView(0);
-
-            if (ui.stage) ui.stage.classList.add("is-mockup");
-
-            // Nothing to drag or zoom on a finished mockup.
-            enableControls(false);
-
-            if (ui.mockupNote) {
-              ui.mockupNote.textContent =
-                "This is the actual product preview from our print partner. " +
-                "It is exactly what will be printed.";
-              show(ui.mockupNote);
-            }
-            // A saved design no longer matches what is on screen.
-            state.saved = null;
-            hide(ui.savedBox);
-            updateCartButton();
-            setSuccess("Your product preview is ready.");
-            stopPreviewProgress(true);
-            resolve();
+        return showMockups(payload, !payload.approximate).then(function (shown) {
+          if (!shown) {
+            setError("The preview image could not be loaded. Please try again.");
+            return;
           }
 
-          if (ui.mockupImg) {
-            ui.mockupImg.onload = finish;
-            ui.mockupImg.onerror = function () {
-              if (resolved) return;
-              resolved = true;
-              setError("The preview image could not be loaded. Please try again.");
-              resolve();
-            };
-            ui.mockupImg.src = payload.mockup;
-            show(ui.mockupImg);
+          previewSucceeded = true;
+          setSuccess("Your product preview is ready.");
+          stopPreviewProgress(true);
 
-            if (ui.mockupImg.complete && ui.mockupImg.naturalWidth > 0) {
-              finish();
-            }
-          } else {
-            finish();
-          }
+          if (payload.approximate && payload.pending) awaitLiveRender();
         });
       })
       .catch(function (error) {
@@ -3006,7 +3173,13 @@ export function renderCustomizePage({
               const label =
                 escapeHtml(option.designLabel || option.templateName) ||
                 `Design ${index + 1}`;
-              const thumb = escapeHtml(designImage(proxyBase, option));
+              // A 120px tile: ask for a small copy rather than Gelato's 2048px
+              // original. Only our own image route understands `w`.
+              const thumb = escapeHtml(
+                option?.previewPath
+                  ? `${designImage(proxyBase, option)}?w=240`
+                  : designImage(proxyBase, option),
+              );
 
               return `<button type="button" class="mtcp__design"
                       role="radio" aria-checked="${option.mappingId === mapping.mappingId}"
@@ -3066,9 +3239,6 @@ export function renderCustomizePage({
         */ ""}
         <img class="mtcp__stage-view" id="mtcp-view-img"
              alt="Another view of this design" hidden />
-
-
-
 
         <div class="mtcp__area is-quiet" id="mtcp-area">
           <img class="mtcp__art" id="mtcp-art" alt="Your uploaded design"
@@ -3240,7 +3410,7 @@ export function renderCustomizePage({
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
             <circle cx="12" cy="12" r="3"/>
           </svg>
-          Preview on Flat Template
+          View Enlarged Artwork
         </button>
       </section>
 
@@ -3298,7 +3468,7 @@ export function renderCustomizePage({
 <!-- Landscape Design Template Preview Modal -->
 <div class="mtcp-modal" id="mtcp-template-modal" hidden>
   <div class="mtcp-modal__backdrop" id="mtcp-template-backdrop"></div>
-  <div class="mtcp-modal__dialog" role="dialog" aria-modal="true" aria-label="Preview on Flat Template">
+  <div class="mtcp-modal__dialog" role="dialog" aria-modal="true" aria-label="View Enlarged Artwork">
     <div class="mtcp-modal__header">
       <div class="mtcp-modal__title-group">
         <h2 class="mtcp-modal__title">Flat Artwork Print Template</h2>

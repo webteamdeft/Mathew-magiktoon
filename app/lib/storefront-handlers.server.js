@@ -21,6 +21,8 @@
  * SERVER ONLY.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import prisma from "../db.server.js";
 import {
   authenticateStorefrontRequest,
@@ -37,6 +39,7 @@ import { readAsset } from "./storage.server.js";
 import { getCustomization, saveCustomization, storeImage } from "./customizations.server.js";
 import { generateArtwork } from "./generation.server.js";
 import { renderGelatoMockup } from "./gelato-mockup.server.js";
+import { renderMugWrapPreviews } from "./mug-wrap-preview.server.js";
 import {
   FULFILMENT_TTL_MS,
   buildSignedAssetUrl,
@@ -54,7 +57,7 @@ import {
   fetchTemplatePreview,
   resolveTemplateImages,
 } from "./gelato-preview.server.js";
-import { toNumericShopifyId, toTrimmedString } from "./normalize.js";
+import { asArray, toNumericShopifyId, toTrimmedString } from "./normalize.js";
 
 /**
  * GET → the Gelato mapping for the current storefront product.
@@ -328,6 +331,66 @@ export async function storefrontGenerateAction({ request }) {
   });
 }
 
+export function resolveStorefrontAppBaseUrl(request) {
+  // 1. If an incoming request has a Cloudflare tunnel host or public app host:
+  if (request) {
+    try {
+      const host = request.headers.get("host");
+      const proto = request.headers.get("x-forwarded-proto") || "https";
+
+      if (
+        host &&
+        !host.includes("myshopify.com") &&
+        !host.includes("localhost") &&
+        !host.includes("127.0.0.1")
+      ) {
+        const live = `${proto}://${host}`.replace(/\/+$/, "");
+        process.env.SHOPIFY_APP_URL = live;
+        return live;
+      }
+    } catch {}
+  }
+
+  // 2. Read directly from disk (.env and shopify.app.toml) to avoid stale memory in long-running processes
+  try {
+    const envPath = path.resolve(process.cwd(), ".env");
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, "utf8");
+      const match = envContent.match(/SHOPIFY_APP_URL\s*=\s*(https?:\/\/[^\s\r\n]+)/);
+      if (match && match[1] && !match[1].includes("localhost") && !match[1].includes("127.0.0.1")) {
+        const live = match[1].trim().replace(/\/+$/, "");
+        process.env.SHOPIFY_APP_URL = live;
+        return live;
+      }
+    }
+  } catch {}
+
+  try {
+    const tomlPath = path.resolve(process.cwd(), "shopify.app.toml");
+    if (fs.existsSync(tomlPath)) {
+      const tomlContent = fs.readFileSync(tomlPath, "utf8");
+      const match = tomlContent.match(/application_url\s*=\s*["']([^"']+)["']/);
+      if (match && match[1] && !match[1].includes("localhost") && !match[1].includes("127.0.0.1")) {
+        const live = match[1].trim().replace(/\/+$/, "");
+        process.env.SHOPIFY_APP_URL = live;
+        return live;
+      }
+    }
+  } catch {}
+
+  const fallback = toTrimmedString(process.env.SHOPIFY_APP_URL);
+  if (fallback) {
+    return fallback.replace(/\/+$/, "");
+  }
+
+  return "";
+}
+
+// Cache of active and completed mockup render jobs to prevent Shopify App Proxy timeouts
+const mockupJobs = new Map();
+const MOCKUP_JOB_TTL_MS = 15 * 60 * 1000;
+const MAX_SYNCHRONOUS_WAIT_MS = 25000;
+
 /**
  * POST → render a Gelato mockup of the generated artwork (Milestone 5).
  *
@@ -402,12 +465,14 @@ export async function storefrontMockupAction({ request }) {
     );
   }
 
+  const appBaseUrl = resolveStorefrontAppBaseUrl(request);
   let artworkUrl = "";
 
   try {
     artworkUrl = buildSignedAssetUrl(log.outputAssetId, {
       ttlMs: FULFILMENT_TTL_MS,
       requireAbsolute: true,
+      baseUrl: appBaseUrl,
     });
   } catch (error) {
     console.error("[mockup] artwork URL could not be signed:", error.message);
@@ -427,37 +492,181 @@ export async function storefrontMockupAction({ request }) {
       backgroundUrl = buildSignedAssetUrl(mapping.backgroundImageKey, {
         ttlMs: FULFILMENT_TTL_MS,
         requireAbsolute: true,
+        baseUrl: appBaseUrl,
       });
     } catch (error) {
-      // A background that cannot be signed is dropped rather than failing the
-      // preview: the design still renders, just without its backdrop.
       console.error("[mockup] background URL could not be signed:", error.message);
     }
   }
 
-  const result = await renderGelatoMockup({
-    shop: auth.shop,
-    mapping,
-    artworkUrl,
-    backgroundUrl,
-    textValues: body?.text,
-  });
+  const sortedText = body?.text && typeof body.text === "object"
+    ? Object.keys(body.text).sort().reduce((acc, k) => { acc[k] = body.text[k]; return acc; }, {})
+    : {};
+  const jobKey = `${auth.shop}:${mapping.id}:${generationId}:${JSON.stringify(sortedText)}`;
+  let job = mockupJobs.get(jobKey);
 
-  if (!result.ok) {
-    return storefrontJson(
-      { ok: false, code: result.code, error: result.error },
-      { status: result.code === "PREVIEW_FAILED" ? 502 : 200 },
-    );
+  console.log(`[MOCKUP-ACTION] 📥 Storefront request received for product: ${productId}, generation: ${generationId}`);
+  console.log(`  ↳ Artwork URL: ${artworkUrl}`);
+  if (backgroundUrl) console.log(`  ↳ Background URL: ${backgroundUrl}`);
+
+  if (job) {
+    if (job.status === "SUCCESS") {
+      if (!job.payload?.isFallback) {
+        console.log(`[MOCKUP-ACTION] ⚡ Returning cached completed preview for: ${jobKey}`);
+        return storefrontJson(job.payload);
+      }
+      mockupJobs.delete(jobKey);
+      job = null;
+    }
+    if (job?.status === "ERROR") {
+      // Long enough for a poll in flight to collect the failure. A click
+      // starts a new render instead (and gets the wrapped views meanwhile).
+      if (body?.poll && Date.now() - job.completedAt < 30000) {
+        return storefrontJson(job.payload, { status: 200 });
+      }
+      mockupJobs.delete(jobKey);
+      job = null;
+    }
   }
 
-  return storefrontJson({
-    ok: true,
-    // Short-lived and signed, like every other customer asset (NFR-09). The
-    // key travels too, so the approved mockup becomes the order's preview.
-    mockup: buildSignedAssetUrl(result.key),
-    mockupKey: result.key,
-    durationMs: result.durationMs,
-  });
+  if (!job) {
+    const jobEntry = {
+      status: "RUNNING",
+      startedAt: Date.now(),
+    };
+
+    jobEntry.promise = (async () => {
+      try {
+        console.log(`[MOCKUP-ACTION] 🚀 Starting Gelato mockup generation for: ${jobKey}`);
+        const result = await renderGelatoMockup({
+          shop: auth.shop,
+          mapping,
+          artworkUrl,
+          backgroundUrl,
+          textValues: body?.text,
+          // The browser polls while this runs, so the render is not bound by
+          // the app proxy's request timeout. Gelato usually needs one to two
+          // minutes; giving up sooner deletes a render that was nearly done.
+          timeoutMs: 300000,
+        });
+
+        // This job is only ever Gelato's own render; the wrapped stand-ins are
+        // served separately and never presented as the live result.
+        if (!result.ok || !asArray(result.mockups).length) {
+          console.warn(`[MOCKUP-ACTION] ⚠️ Gelato render did not complete: ${result.code || ""} ${result.error || "no mockups"}`);
+          jobEntry.status = "ERROR";
+          jobEntry.completedAt = Date.now();
+          jobEntry.payload = {
+            ok: false,
+            code: result.code || "PREVIEW_FAILED",
+            error: result.error || "The preview could not be created. Please try again.",
+          };
+          return jobEntry.payload;
+        }
+
+        const primaryUrl = buildSignedAssetUrl(result.key, { baseUrl: appBaseUrl });
+        const mockups = asArray(result.mockups).map((item) => ({
+          url: buildSignedAssetUrl(item.key, { baseUrl: appBaseUrl }),
+          key: item.key,
+          isPrimary: Boolean(item.isPrimary),
+        }));
+
+        jobEntry.status = "SUCCESS";
+        jobEntry.completedAt = Date.now();
+        jobEntry.payload = {
+          ok: true,
+          mockup: primaryUrl,
+          mockupKey: result.key,
+          mockups: mockups.length > 0 ? mockups : [{ url: primaryUrl, key: result.key, isPrimary: true }],
+          durationMs: Date.now() - jobEntry.startedAt,
+        };
+        console.log(
+          `[MOCKUP-ACTION] ✅ Render completed in ${Math.round((Date.now() - jobEntry.startedAt) / 1000)}s with ${jobEntry.payload.mockups.length} mockups`,
+        );
+        return jobEntry.payload;
+      } catch (err) {
+        console.error("[MOCKUP-ACTION] ❌ Render exception:", err);
+        jobEntry.status = "ERROR";
+        jobEntry.completedAt = Date.now();
+        jobEntry.payload = {
+          ok: false,
+          code: "PREVIEW_FAILED",
+          error: "The preview could not be created. Please try again.",
+        };
+        return jobEntry.payload;
+      }
+    })();
+
+    mockupJobs.set(jobKey, jobEntry);
+
+    setTimeout(() => {
+      mockupJobs.delete(jobKey);
+    }, MOCKUP_JOB_TTL_MS).unref?.();
+
+    job = jobEntry;
+  }
+
+  // The click itself (not a follow-up poll) answers within seconds: the
+  // customer's design wrapped onto Gelato's own mockup photos, while the live
+  // Gelato render carries on in the background. The browser keeps polling and
+  // swaps the live render in when it lands.
+  if (!body?.poll && job.status !== "SUCCESS") {
+    if (!job.previews) {
+      job.previews = renderMugWrapPreviews({
+        shop: auth.shop,
+        mapping,
+        artworkKey: log.outputAssetId,
+        textValues: body?.text,
+      }).catch((error) => {
+        console.warn("[MOCKUP-ACTION] wrap previews failed:", error?.message);
+        return [];
+      });
+    }
+
+    const previews = (await job.previews).map((item) => ({
+      url: buildSignedAssetUrl(item.key, { baseUrl: appBaseUrl }),
+      key: item.key,
+      approximate: true,
+    }));
+
+    if (previews.length > 0) {
+      return storefrontJson({
+        ok: true,
+        approximate: true,
+        pending: job.status === "RUNNING",
+        mockup: previews[0].url,
+        mockupKey: previews[0].key,
+        mockups: previews,
+      });
+    }
+  }
+
+  const outcome = await Promise.race([
+    job.promise,
+    new Promise((resolve) => setTimeout(() => resolve({ pending: true }), 15000)),
+  ]);
+
+  if (outcome.pending) {
+    if (job.status === "SUCCESS" && job.payload) {
+      console.log(`[MOCKUP-ACTION] 📤 Serving ${job.payload.mockups?.length || 1} mockups to storefront:`);
+      job.payload.mockups?.forEach((m, i) => console.log(`   [View ${i + 1}] ${m.key} -> ${m.url}`));
+      return storefrontJson(job.payload);
+    }
+    return storefrontJson({
+      ok: true,
+      pending: true,
+      status: "BUILDING",
+      message: "Building 3D mockups...",
+      elapsedMs: Date.now() - job.startedAt,
+    });
+  }
+
+  if (outcome?.mockups?.length) {
+    console.log(`[MOCKUP-ACTION] 📤 Serving ${outcome.mockups.length} mockups to storefront:`);
+    outcome.mockups.forEach((m, i) => console.log(`   [View ${i + 1}] ${m.key} -> ${m.url}`));
+  }
+
+  return storefrontJson(outcome, { status: 200 });
 }
 
 /**
@@ -647,12 +856,14 @@ export async function storefrontTemplateImageLoader({ request, params }) {
     return new Response("Not found", { status: 404 });
   }
 
-  const index = Math.max(
-    0,
-    Number(new URL(request.url).searchParams.get("i")) || 0,
-  );
+  const searchParams = new URL(request.url).searchParams;
 
-  const result = await fetchTemplatePreview(mapping, { index });
+  const index = Math.max(0, Number(searchParams.get("i")) || 0);
+
+  // Optional: a scaled-down copy for thumbnails. Absent means the original.
+  const width = Number(searchParams.get("w")) || 0;
+
+  const result = await fetchTemplatePreview(mapping, { index, width });
 
   if (!result.ok) {
     return new Response(result.error, { status: result.status });
@@ -806,7 +1017,9 @@ function liquidResponse(body, init = {}) {
     ...init,
     headers: {
       "Content-Type": "application/liquid",
-      "Cache-Control": "no-store",
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
       ...(init.headers || {}),
     },
   });

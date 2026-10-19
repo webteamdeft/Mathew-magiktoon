@@ -58,3 +58,19 @@ test("the mapping id leads the key, so one design can be forgotten alone", () =>
   // first it would clear the wrong designs, or none.
   assert.equal(previewCacheKey(mapping()).split("|")[0], "map_mug");
 });
+
+test("thumbnail widths snap to a few sizes, so the image cache stays small", async () => {
+  const { snapImageWidth } = await import("../app/lib/gelato-preview.server.js");
+
+  assert.equal(snapImageWidth(240), 240);
+  assert.equal(snapImageWidth(200), 240);
+  assert.equal(snapImageWidth(99999), 1024);
+});
+
+test("no width, or nonsense, means the original image as before", async () => {
+  const { snapImageWidth } = await import("../app/lib/gelato-preview.server.js");
+
+  assert.equal(snapImageWidth(undefined), 0);
+  assert.equal(snapImageWidth("abc"), 0);
+  assert.equal(snapImageWidth(-5), 0);
+});

@@ -124,3 +124,51 @@ test("an entry with no file is skipped rather than becoming a broken thumbnail",
 
   assert.deepEqual(urls, ["https://cdn/a.jpg", "https://cdn/b.jpg"]);
 });
+
+/**
+ * A brand-new design.
+ *
+ * Its Gelato gallery does not exist for the first few minutes, so the template
+ * preview stands in. That stand-in used to be cached for six hours, which kept
+ * a just-created product on one wrong image long after its gallery was ready.
+ */
+test("a stand-in without the gallery is re-checked within minutes, not hours", async () => {
+  const design = mapping({ gelatoProductId: "" });
+  let clock = 1_000_000;
+  const now = () => clock;
+
+  const before = await resolveTemplateImages(design, {
+    ...deps({ templatePreview: "https://cdn/template.jpg" }),
+    now,
+  });
+
+  assert.deepEqual(before, ["https://cdn/template.jpg"]);
+
+  // Gelato finishes publishing: the store product and its gallery now exist.
+  clock += 2 * 60 * 1000;
+
+  const after = await resolveTemplateImages(design, {
+    ...deps({ images: ["https://cdn/a.jpg", "https://cdn/b.jpg"] }),
+    findStoreProduct: async () => ({ id: "prod_new" }),
+    now,
+  });
+
+  assert.deepEqual(after, ["https://cdn/a.jpg", "https://cdn/b.jpg"]);
+});
+
+test("a real gallery is still cached, so pages do not re-ask Gelato", async () => {
+  const design = mapping();
+  let clock = 1_000_000;
+  const now = () => clock;
+
+  await resolveTemplateImages(design, { ...deps({ images: ["https://cdn/a.jpg"] }), now });
+
+  clock += 2 * 60 * 1000;
+
+  const again = await resolveTemplateImages(design, {
+    ...deps({ images: ["https://cdn/changed.jpg"] }),
+    now,
+  });
+
+  assert.deepEqual(again, ["https://cdn/a.jpg"]);
+});

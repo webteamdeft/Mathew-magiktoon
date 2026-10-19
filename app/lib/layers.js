@@ -25,6 +25,31 @@
 
 import { asArray, toTrimmedString } from "./normalize.js";
 
+/** Gelato's designer convention for a layer the customer must not change. */
+export function isFixedGelatoName(name) {
+  return /\(fixed\)/i.test(toTrimmedString(name));
+}
+
+/**
+ * A customer-facing title from a Gelato layer name, or "" when the name is
+ * Gelato's auto-generated one ("Text 4", "Copy of Copy of Text 4") and says
+ * nothing. "(fixed)" is the designer's note to us, not part of the title.
+ */
+export function gelatoFieldLabel(name) {
+  const trimmed = toTrimmedString(name);
+
+  if (!trimmed || /^(copy of\s+)*(text|image)(\s*\d+)?$/i.test(trimmed)) {
+    return "";
+  }
+
+  return trimmed.replace(/\s*\(fixed\)\s*/gi, " ").trim();
+}
+
+/** Wording compared without whitespace or case. */
+function squashWording(value) {
+  return toTrimmedString(value).replace(/\s+/g, "").toLowerCase();
+}
+
 export const LAYER_TYPES = { IMAGE: "image", TEXT: "text" };
 
 export const TEXT_ALIGNMENTS = ["left", "center", "right"];
@@ -253,12 +278,19 @@ export function seedLayersFromTemplate(template, existing = []) {
           width,
           height: width / ratio,
           zIndex: index + 1,
-          editable: true,
+          editable: !isFixedGelatoName(name),
         },
         index,
       ),
     );
   });
+
+  // Every name the template has now. A saved layer whose name is not among
+  // them was renamed in Gelato, and may be carried over below.
+  const currentNames = new Set(
+    [...images, ...texts].map((placeholder) => toTrimmedString(placeholder?.name)),
+  );
+  const carried = new Set();
 
   texts.forEach((placeholder, index) => {
     const name = toTrimmedString(placeholder?.name);
@@ -267,6 +299,33 @@ export function seedLayersFromTemplate(template, existing = []) {
 
     if (previous.has(name)) {
       layers.push(previous.get(name));
+      return;
+    }
+
+    // Renamed in Gelato ("Copy of Copy of Text 4" became "Name"): keep the
+    // merchant's position and styling from the old layer, found by the default
+    // wording the rename leaves untouched, under the new name and title.
+    const wording = squashWording(placeholder?.defaultText);
+    const renamed = wording
+      ? normalizeLayers(existing).find(
+          (layer) =>
+            layer.type === LAYER_TYPES.TEXT &&
+            !currentNames.has(layer.name) &&
+            !carried.has(layer.name) &&
+            squashWording(layer.text?.content) === wording,
+        )
+      : null;
+
+    if (renamed) {
+      carried.add(renamed.name);
+      layers.push(
+        normalizeLayer({
+          ...renamed,
+          name,
+          label: gelatoFieldLabel(name) || renamed.label,
+          editable: isFixedGelatoName(name) ? false : renamed.editable,
+        }),
+      );
       return;
     }
 
@@ -285,13 +344,20 @@ export function seedLayersFromTemplate(template, existing = []) {
           // The wording is not lost — it is the field's value, in the box
           // directly beneath the label. This is a placeholder for the merchant
           // to replace in the layer editor, and it reads like one.
-          label: toTrimmedString(placeholder?.label) || `Text ${index + 1}`,
+          //
+          // A designer who names the layer in Gelato ("Name", "Year") has
+          // written the title already; that wins.
+          label:
+            gelatoFieldLabel(name) ||
+            toTrimmedString(placeholder?.label) ||
+            `Text ${index + 1}`,
           x: 0.3,
           y: 0.62 + index * 0.06,
           width: 0.4,
           height: 0.06,
           zIndex: images.length + index + 1,
-          editable: true,
+          // Marked "(fixed)" in Gelato: part of the design, not the customer's.
+          editable: !isFixedGelatoName(name),
           text: { content: toTrimmedString(placeholder?.defaultText) },
         },
         images.length + index,

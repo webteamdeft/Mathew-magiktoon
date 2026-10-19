@@ -17,6 +17,7 @@ const CONTENT_TYPES = {
  */
 export async function loader({ params, request }) {
   const key = params["*"];
+  console.log("[uploads] incoming GET for key:", key, "ua:", request.headers.get("user-agent"), "ip:", request.headers.get("x-forwarded-for"));
 
   if (!key) {
     return new Response("Missing upload key", { status: 400 });

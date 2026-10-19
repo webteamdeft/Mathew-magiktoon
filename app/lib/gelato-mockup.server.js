@@ -30,12 +30,12 @@
 
 import { getGelatoConfig } from "./env.server.js";
 import { storeAsset } from "./storage.server.js";
-import { asArray, toTrimmedString } from "./normalize.js";
+import { asArray, firstString, toTrimmedString } from "./normalize.js";
 
 const GELATO_ECOMMERCE_API = "https://ecommerce.gelatoapis.com/v1";
 
 /** How long to wait for Gelato to render, and how often to look. */
-const RENDER_TIMEOUT_MS = 120000;
+const RENDER_TIMEOUT_MS = 60000;
 
 /**
  * Statuses that mean Gelato has given up.
@@ -109,20 +109,34 @@ export function buildImagePlaceholders(
     )
     .filter(Boolean);
 
-  const names = fromTemplate.length > 0
-    ? fromTemplate
-    : [
-        toTrimmedString(
-          mapping?.gelatoPlaceholderName || mapping?.placeholderName || "ImageFront",
-        ),
-      ].filter(Boolean);
-
-  // The admin can nominate one placeholder to carry the background layer
-  // instead of the artwork (SOW section 3.5). Only honoured when a background
-  // has actually been uploaded — otherwise that placeholder would print empty.
   const backgroundName = toTrimmedString(backgroundUrl)
     ? toTrimmedString(mapping?.backgroundPlaceholderName)
     : "";
+
+  const targetArtworkName = toTrimmedString(
+    mapping?.gelatoPlaceholderName || mapping?.placeholderName || "",
+  );
+
+  const templateHasTarget = targetArtworkName && fromTemplate.some((name) =>
+    name === targetArtworkName || name.includes(targetArtworkName) || targetArtworkName.includes(name)
+  );
+
+  const names = (fromTemplate.length > 0
+    ? fromTemplate
+    : [targetArtworkName || "ImageFront"].filter(Boolean)
+  ).filter((name) => {
+    if (backgroundName && name === backgroundName) return true;
+    if (/bar\s*code|barcode|logo|lens/i.test(name)) return false;
+    if (!backgroundUrl && /background|edge-to-edge/i.test(name)) return false;
+    if (templateHasTarget) {
+      return (
+        name === targetArtworkName ||
+        name.includes(targetArtworkName) ||
+        targetArtworkName.includes(name)
+      );
+    }
+    return true;
+  });
 
   // Deduplicated: the same placeholder listed twice must not be sent twice
   // once one of them is the background.
@@ -138,9 +152,6 @@ export function buildImagePlaceholders(
     .map((name) => ({
       name,
       fileUrl: name === backgroundName ? backgroundUrl : artworkUrl,
-      // "slice" fills the placeholder and crops the overflow, which is what the
-      // customizer's own preview shows. "fit" would letterbox and the printed
-      // item would not match the mockup the customer approved.
       fitMethod: "slice",
     }));
 }
@@ -158,15 +169,113 @@ export function buildTextPlaceholders(templateVariant, mapping, textValues) {
     .map((placeholder) => toTrimmedString(placeholder?.name))
     .filter(Boolean);
 
+  // The wording each live text area ships with, by its current name.
+  const liveDefaults = new Map(
+    asArray(templateVariant?.textPlaceholders).map((placeholder) => [
+      toTrimmedString(placeholder?.name),
+      firstString(placeholder?.text, placeholder?.defaultText),
+    ]),
+  );
+
+  const staleValueFor = staleTextResolver(mapping, values, declared);
+
   const known = declared.length > 0
     ? declared
     : asArray(mapping?.gelatoTextPlaceholders)
         .map((placeholder) => toTrimmedString(placeholder?.name))
         .filter(Boolean);
 
-  return known
-    .filter((name) => toTrimmedString(values[name]))
-    .map((name) => ({ name, text: toTrimmedString(values[name]) }));
+  const uniqueNames = Array.from(new Set(known));
+
+  return uniqueNames
+    .map((name) => {
+      let val = toTrimmedString(values[name]);
+      if (!val) {
+        const matchingKey = Object.keys(values).find(
+          (k) => k.toLowerCase().trim() === name.toLowerCase().trim()
+        );
+        if (matchingKey) val = toTrimmedString(values[matchingKey]);
+      }
+      if (!val) {
+        val = staleValueFor(name, liveDefaults.get(name));
+      }
+      if (!val && uniqueNames.length === 1 && Object.values(values).length > 0) {
+        val = toTrimmedString(Object.values(values)[0]);
+      }
+      // Left as the template has it: send nothing and let Gelato keep its own
+      // wording. The storefront's single-line input strips line breaks, so
+      // echoing an untouched multi-line default back would flatten it.
+      if (val && sameWording(val, liveDefaults.get(name))) {
+        return null;
+      }
+      return val ? { name, text: val } : null;
+    })
+    .filter(Boolean);
+}
+
+/** Wording compared without whitespace or case, as an input box returns it. */
+function squashWording(value) {
+  return toTrimmedString(value).replace(/\s+/g, "").toLowerCase();
+}
+
+function sameWording(a, b) {
+  const left = squashWording(a);
+
+  return Boolean(left) && left === squashWording(b);
+}
+
+/**
+ * Find a customer's value that was submitted under a text area's OLD name.
+ *
+ * Renaming text layers in Gelato (say "Copy of Copy of Text 4" to "Name") does
+ * not touch the design saved here, so the storefront keeps submitting the old
+ * names. Gelato has no area by those names, so every value was dropped and the
+ * mockup printed the template's defaults whatever the customer typed.
+ *
+ * The rename keeps each area's default wording, which is also on the saved
+ * design, so an old name is matched to its new one through that wording. Each
+ * old name is used at most once, and only names the template no longer has are
+ * considered, so a design that is in step with its template is unaffected.
+ */
+function staleTextResolver(mapping, values, liveNames) {
+  const live = new Set(liveNames);
+
+  // Old name -> the wording it was saved with.
+  const savedWording = new Map();
+
+  for (const layer of asArray(mapping?.layers)) {
+    if (layer?.type === "text" && toTrimmedString(layer?.name)) {
+      savedWording.set(toTrimmedString(layer.name), layer?.text?.content);
+    }
+  }
+
+  for (const placeholder of asArray(mapping?.gelatoTextPlaceholders)) {
+    const name = toTrimmedString(placeholder?.name);
+
+    if (name && !savedWording.has(name)) {
+      savedWording.set(name, placeholder?.defaultText);
+    }
+  }
+
+  const used = new Set();
+
+  return (liveName, liveWording) => {
+    const wanted = squashWording(liveWording);
+
+    if (!wanted) return "";
+
+    for (const [oldName, value] of Object.entries(values)) {
+      const name = toTrimmedString(oldName);
+
+      if (live.has(name) || used.has(name)) continue;
+      if (squashWording(savedWording.get(name)) !== wanted) continue;
+
+      used.add(name);
+      return toTrimmedString(value);
+    }
+
+    return "";
+  };
 }
 
 /** The template variant this mapping prints, or the template's only one. */
@@ -189,7 +298,9 @@ export function pickTemplateVariant(template, mapping) {
         variant.templateVariantId === wanted ||
         variant.variantId === wanted ||
         variant.uid === wanted,
-    ) || variants[0]
+    ) ||
+    variants.find((v) => /white/i.test(v.title || v.name || "")) ||
+    variants[0]
   );
 }
 
@@ -202,7 +313,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  *                     code?: string, error?: string, durationMs: number }>}
  */
 export async function renderGelatoMockup(
-  { shop, mapping, artworkUrl, backgroundUrl = "", textValues = {} },
+  {
+    shop,
+    mapping,
+    artworkUrl,
+    backgroundUrl = "",
+    textValues = {},
+    timeoutMs: optTimeoutMs,
+  },
   deps = {},
 ) {
   const {
@@ -211,7 +329,7 @@ export async function renderGelatoMockup(
     store = storeAsset,
     now = () => Date.now(),
     wait = sleep,
-    timeoutMs = RENDER_TIMEOUT_MS,
+    timeoutMs = optTimeoutMs || RENDER_TIMEOUT_MS,
   } = deps;
 
   const startedAt = now();
@@ -243,9 +361,12 @@ export async function renderGelatoMockup(
   // The usual cause in development is the tunnel: no SHOPIFY_APP_URL, or an
   // address that has rotated since the app started.
   try {
+    console.log(`[mockup] Step 1/5: Probing artwork URL reachability: ${artworkUrl}`);
     const probe = await fetchImpl(artworkUrl, { method: "GET" });
+    console.log(`[mockup] Step 1/5: Artwork probe status: ${probe.status}`);
 
     if (!probe.ok && probe.status >= 400 && probe.status < 500) {
+      console.error(`[mockup] Artwork unreachable: HTTP ${probe.status}`);
       return {
         ok: false,
         code: "ARTWORK_UNREACHABLE",
@@ -255,16 +376,26 @@ export async function renderGelatoMockup(
       };
     }
   } catch (error) {
-    console.warn("[mockup] probe warning:", error.message);
+    console.warn("[mockup] Step 1/5: Artwork probe error:", error.message);
+
+    return {
+      ok: false,
+      code: "ARTWORK_UNREACHABLE",
+      error: "Your artwork could not be reached for the preview. Please try again.",
+      detail: error.message,
+      durationMs: now() - startedAt,
+    };
   }
 
   let productId = "";
 
   try {
+    console.log(`[MOCKUP-STEP 2/5] 📋 Fetching template ${templateId} & picking variant from Gelato...`);
     const template = await request(`/templates/${encodeURIComponent(templateId)}`);
     const variant = pickTemplateVariant(template, mapping);
 
     if (!variant) {
+      console.error(`[MOCKUP-STEP 2/5] ❌ Template ${templateId} variant not found for mapping ${mapping?.id}`);
       return {
         ok: false,
         code: "NOT_CONFIGURED",
@@ -272,6 +403,22 @@ export async function renderGelatoMockup(
         durationMs: now() - startedAt,
       };
     }
+    const variantId = variant.id || variant.templateVariantId || variant.variantId;
+    console.log(`[MOCKUP-STEP 2/5] ✅ Picked variant: ID=${variantId}, Title="${variant.title || variant.name || "Default"}"`);
+
+    const imagePlaceholders = buildImagePlaceholders(
+      variant,
+      mapping,
+      artworkUrl,
+      backgroundUrl,
+    );
+    const textPlaceholders = buildTextPlaceholders(variant, mapping, textValues);
+
+    console.log(`[MOCKUP-STEP 3/5] 📤 Submitting product creation to Gelato API:`);
+    console.log(`  ↳ Store ID: ${getGelatoConfig().storeId}`);
+    console.log(`  ↳ Template ID: ${templateId}, Variant ID: ${variantId}`);
+    console.log(`  ↳ Image placeholders (${imagePlaceholders.length}):`, imagePlaceholders.map((p) => `${p.name} -> ${p.fileUrl?.slice(0, 80)}...`));
+    console.log(`  ↳ Text placeholders (${textPlaceholders.length}):`, textPlaceholders.map((t) => `${t.name} -> "${t.text}"`));
 
     const created = await request(
       `/stores/${encodeURIComponent(getGelatoConfig().storeId)}/products:create-from-template`,
@@ -279,23 +426,21 @@ export async function renderGelatoMockup(
         method: "POST",
         body: JSON.stringify({
           templateId,
-          // Marked clearly so anything left behind by a failed clean-up is
-          // recognisable in the merchant's Gelato store.
           title: `MagikToon preview — do not publish (${shop})`,
           description: "Temporary product used to render a customer preview.",
           isVisibleInTheOnlineStore: false,
           salesChannels: [],
           tags: ["magiktoon-preview"],
+          metadata: [
+            { key: "previewScenes", value: JSON.stringify(["default", "front", "right"]) },
+            { key: "primaryPreviewScene", value: "right" },
+            { key: "previewFileType", value: "jpeg" },
+          ],
           variants: [
             {
               templateVariantId: variant.templateVariantId || variant.id,
-              imagePlaceholders: buildImagePlaceholders(
-                variant,
-                mapping,
-                artworkUrl,
-                backgroundUrl,
-              ),
-              textPlaceholders: buildTextPlaceholders(variant, mapping, textValues),
+              imagePlaceholders,
+              textPlaceholders,
             },
           ],
         }),
@@ -311,14 +456,17 @@ export async function renderGelatoMockup(
     );
 
     if (!productId) {
-      console.error("[mockup] Gelato create-from-template failed to return an id. Response:", created);
+      console.error("[MOCKUP-STEP 3/5] ❌ Gelato create-from-template failed to return an ID. Response:", JSON.stringify(created));
       return {
         ok: false,
         code: "PREVIEW_FAILED",
         error: "The preview could not be created. Please try again.",
+        detail: created?.message || created?.error || "Gelato create-from-template failed to return a product ID",
         durationMs: now() - startedAt,
       };
     }
+
+    console.log(`[MOCKUP-STEP 3/5] ✅ Gelato accepted product! Product ID: ${productId}, Initial status: "${created?.status || "created"}"`);
 
     // Gelato renders asynchronously; the preview appears on the product a few
     // seconds after it is created.
@@ -328,14 +476,24 @@ export async function renderGelatoMockup(
       toTrimmedString(asArray(created?.productImages)[0]?.fileUrl) ||
       toTrimmedString(asArray(created?.productImages)[0]?.url);
 
-    while (!previewUrl && now() - startedAt < timeoutMs) {
+    let latestProduct = null;
+    let firstSawPreviewAt = 0;
+    let pollCount = 0;
+    const targetMockupCount = Math.min(3, Math.max(1, Number(mapping?.gelatoImageCount) || 3));
+
+    while (now() - startedAt < timeoutMs) {
       await wait(POLL_INTERVAL_MS);
+      pollCount++;
 
       const product = await request(
         `/stores/${encodeURIComponent(getGelatoConfig().storeId)}/products/${productId}`,
       );
+      latestProduct = product;
 
       const images = asArray(product?.productImages || product?.images);
+      const firstVariant = asArray(product?.variants || product?.productVariants)[0];
+      const variantImages = asArray(firstVariant?.productImages || firstVariant?.images);
+
       previewUrl =
         toTrimmedString(product?.previewUrl) ||
         toTrimmedString(product?.preview_url) ||
@@ -343,18 +501,55 @@ export async function renderGelatoMockup(
         toTrimmedString(images[0]?.url) ||
         toTrimmedString(images.find((img) => img?.fileUrl || img?.url)?.fileUrl) ||
         toTrimmedString(images.find((img) => img?.fileUrl || img?.url)?.url) ||
-        toTrimmedString(asArray(product?.variants || product?.productVariants)[0]?.previewUrl);
+        toTrimmedString(firstVariant?.previewUrl) ||
+        toTrimmedString(variantImages[0]?.fileUrl) ||
+        toTrimmedString(variantImages[0]?.url);
 
-      if (previewUrl) break;
+      if ((previewUrl || images.length > 0) && !firstSawPreviewAt) {
+        firstSawPreviewAt = now();
+      }
 
-      // Gelato reports a failure several seconds before our timeout would fire.
-      // Waiting it out turns a known, explicable failure into "took too long".
       const status = toTrimmedString(product?.status).toLowerCase();
+      const elapsedSec = Math.round((now() - startedAt) / 1000);
 
+      console.log(
+        `[MOCKUP-STEP 4/5] ⏳ Polling Gelato (poll #${pollCount}, ${elapsedSec}s elapsed): status="${status}", previewUrl=${previewUrl ? "FOUND" : "false (rendering in cloud...)"}, images=${images.length}, variantImages=${variantImages.length}`,
+      );
+
+      // If mockups are not ready yet, explain clearly in logs
+      if (!previewUrl && images.length === 0 && status === "created") {
+        console.log(`  ↳ Gelato render queue in progress: raytracing scenes in Gelato cloud...`);
+      }
+
+      // Break if all requested mockups are ready
+      if (images.length >= targetMockupCount || images.length >= 3) {
+        console.log(`[MOCKUP-STEP 4/5] 🎯 Target mockup count (${images.length}/${targetMockupCount}) reached!`);
+        break;
+      }
+
+      // If Gelato fully finished publishing and produced images, break
+      if ((images.length > 0 || previewUrl) && (status === "active" || status === "completed")) {
+        console.log(`[MOCKUP-STEP 4/5] 🎯 Gelato status is '${status}' with ${images.length} images!`);
+        break;
+      }
+
+      // If we have at least one preview and 10s have passed, proceed
+      if (firstSawPreviewAt && (images.length > 0 || previewUrl) && now() - firstSawPreviewAt >= 10000) {
+        console.log(`[MOCKUP-STEP 4/5] 🎯 Preview found, proceeding to download.`);
+        break;
+      }
+
+      // If Gelato reported a failure, but we already have mockups, don't fail — use what was generated
       if (FAILED_STATUSES.has(status)) {
+        if (images.length > 0 || previewUrl) {
+          break;
+        }
+
         const reasons = asArray(product?.publishingErrors)
           .map((entry) => toTrimmedString(entry?.message) || toTrimmedString(entry))
           .filter(Boolean);
+
+        console.error(`[MOCKUP-STEP 4/5] ❌ Gelato reported failure status "${status}":`, reasons);
 
         return {
           ok: false,
@@ -367,6 +562,7 @@ export async function renderGelatoMockup(
     }
 
     if (!previewUrl) {
+      console.warn(`[MOCKUP-STEP 4/5] ⚠️ Live polling timeout (${Math.round((now() - startedAt) / 1000)}s) reached with previewUrl still false.`);
       return {
         ok: false,
         code: "TIMED_OUT",
@@ -375,11 +571,71 @@ export async function renderGelatoMockup(
       };
     }
 
-    // Copied out of Gelato immediately: their link is presigned for 24 hours
-    // and dies with the product we are about to delete.
-    const response = await fetchImpl(previewUrl);
+    // Collect all unique mockup URLs from the product
+    const candidateUrls = [];
+    const seenUrls = new Set();
+    const addCandidate = (url, isPrimary = false) => {
+      const trimmed = toTrimmedString(url);
+      if (!trimmed) return;
+      const stripped = trimmed.split("?")[0];
+      if (seenUrls.has(stripped)) return;
+      seenUrls.add(stripped);
+      candidateUrls.push({ url: trimmed, isPrimary });
+    };
 
-    if (!response.ok) {
+    if (previewUrl) addCandidate(previewUrl, true);
+
+    const allProductImages = asArray(
+      latestProduct?.productImages || latestProduct?.images || created?.productImages,
+    );
+    for (const img of allProductImages) {
+      addCandidate(img?.fileUrl || img?.url, Boolean(img?.isPrimary));
+    }
+
+    const allVariants = asArray(
+      latestProduct?.variants || latestProduct?.productVariants || created?.variants,
+    );
+    for (const v of allVariants) {
+      if (v?.previewUrl) addCandidate(v.previewUrl, false);
+      for (const vImg of asArray(v?.productImages || v?.images)) {
+        addCandidate(vImg?.fileUrl || vImg?.url, Boolean(vImg?.isPrimary));
+      }
+    }
+
+    // Download and store each available mockup in parallel
+    console.log(`[MOCKUP-STEP 5/5] 📥 Found ${candidateUrls.length} candidate mockup URLs from Gelato, downloading & storing in parallel...`);
+    const storedMockups = (
+      await Promise.all(
+        candidateUrls.map(async (item, idx) => {
+          try {
+            console.log(`  ↳ Fetching mockup #${idx + 1} from Gelato CDN: ${item.url.slice(0, 100)}...`);
+            const response = await fetchImpl(item.url);
+            if (response.ok) {
+              const buffer = Buffer.from(await response.arrayBuffer());
+              const mimeType = response.headers?.get?.("content-type") || "image/jpeg";
+              const key = await store(buffer, {
+                mimeType: mimeType.includes("png") ? "image/png" : "image/jpeg",
+                prefix: `mockups/${toTrimmedString(shop).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+              });
+              console.log(`  ✅ Successfully saved mockup #${idx + 1} to storage: ${key}`);
+              return {
+                key,
+                mimeType,
+                isPrimary: item.isPrimary,
+              };
+            } else {
+              console.warn(`  ⚠️ Gelato CDN answered HTTP ${response.status} for mockup #${idx + 1}`);
+            }
+          } catch (err) {
+            console.warn(`  ❌ Failed to fetch/store mockup #${idx + 1}:`, err.message);
+          }
+          return null;
+        }),
+      )
+    ).filter(Boolean);
+
+    if (storedMockups.length === 0) {
+      console.error("[MOCKUP-STEP 5/5] ❌ Failed to store any mockups from candidate URLs");
       return {
         ok: false,
         code: "PREVIEW_FAILED",
@@ -388,15 +644,16 @@ export async function renderGelatoMockup(
       };
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const mimeType = response.headers?.get?.("content-type") || "image/jpeg";
+    const primaryMockup = storedMockups.find((m) => m.isPrimary) || storedMockups[0];
+    console.log(`[MOCKUP-STEP 5/5] 🎉 Gelato live render complete! Stored ${storedMockups.length} mockups in ${now() - startedAt}ms. Primary: ${primaryMockup.key}`);
 
-    const key = await store(buffer, {
-      mimeType: mimeType.includes("png") ? "image/png" : "image/jpeg",
-      prefix: `mockups/${toTrimmedString(shop).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
-    });
-
-    return { ok: true, key, mimeType, durationMs: now() - startedAt };
+    return {
+      ok: true,
+      key: primaryMockup.key,
+      mimeType: primaryMockup.mimeType,
+      mockups: storedMockups,
+      durationMs: now() - startedAt,
+    };
   } catch (error) {
     console.error("[mockup] failed:", error?.message);
 
@@ -408,7 +665,9 @@ export async function renderGelatoMockup(
     };
   } finally {
     if (productId) {
-      await deleteMockupProduct(productId, { request });
+      deleteMockupProduct(productId, { request }).catch((err) => {
+        console.warn("[mockup] background cleanup failed:", err?.message);
+      });
     }
   }
 }

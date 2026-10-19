@@ -16,6 +16,7 @@ import {
   InlineGrid,
   FormLayout,
 } from "@shopify/polaris";
+import { ImageIcon } from "@shopify/polaris-icons";
 import { Form, redirect, useActionData, useLoaderData, useNavigation } from "react-router";
 
 import { authenticate } from "../shopify.server";
@@ -23,7 +24,10 @@ import { getMappingById, saveMapping } from "../lib/mappings.server";
 import { listGenerationOptions } from "../lib/generation-settings.server";
 import { buildSignedAssetUrl } from "../lib/signed-urls.server";
 import { tryGetGelatoTemplateDetail } from "../lib/gelato-catalog.server";
-import { resolveTemplatePreviewUrl } from "../lib/gelato-preview.server";
+import {
+  resolveTemplateImages,
+  resolveTemplatePreviewUrl,
+} from "../lib/gelato-preview.server";
 import { asArray, firstString, toTrimmedString } from "../lib/normalize";
 import {
   ASPECT_RATIO_OPTIONS,
@@ -31,10 +35,22 @@ import {
 } from "../lib/image-shape";
 import { hasPrintArea, resolvePrintGeometry } from "../lib/print-geometry";
 import {
+  isFixedGelatoName,
   normalizeLayers,
   reorderLayer,
   seedLayersFromTemplate,
 } from "../lib/layers";
+
+/**
+ * The image area the AI artwork goes into by default: the first one the
+ * designer has not marked "(fixed)". Taking the first area outright picked a
+ * template's fixed background, which the artwork is never sent to.
+ */
+function artworkPlaceholder(placeholders) {
+  const all = asArray(placeholders);
+
+  return all.find((placeholder) => !isFixedGelatoName(placeholder?.name)) || all[0];
+}
 import {
   MAPPING_STATUS_OPTIONS,
   fulfillmentMode,
@@ -104,7 +120,9 @@ export async function loader({ request, params }) {
   // Same reason as the mappings list: an <img> cannot carry the admin session
   // token, so the URL has to be resolved here and handed to the browser ready
   // to use. Gelato signs it for 24 hours and this loader runs on every visit.
-  const previewUrl = mapping ? await resolveTemplatePreviewUrl(mapping) : "";
+  const previewUrls = mapping ? await resolveTemplateImages(mapping) : [];
+  const previewUrl =
+    previewUrls[0] || (mapping ? await resolveTemplatePreviewUrl(mapping) : "");
 
   // Milestone 4: which prompt and model this design generates with.
   const generationOptions = await listGenerationOptions(session.shop);
@@ -126,6 +144,7 @@ export async function loader({ request, params }) {
     mapping,
     template,
     previewUrl,
+    previewUrls,
     backgroundUrl,
     generationOptions,
   });
@@ -501,6 +520,7 @@ export default function MappingForm() {
     mapping,
     template: loadedTemplate,
     previewUrl: loadedPreviewUrl,
+    previewUrls: loadedPreviewUrls,
     backgroundUrl: loadedBackgroundUrl,
     generationOptions,
   } = useLoaderData();
@@ -515,6 +535,11 @@ export default function MappingForm() {
   const [templateError, setTemplateError] = useState("");
   const [pickerError, setPickerError] = useState("");
   const [clientErrors, setClientErrors] = useState({});
+  const [selectedMockupUrls, setSelectedMockupUrls] = useState(() => {
+    const urls = asArray(loadedPreviewUrls).filter(Boolean);
+    if (urls.length > 0) return urls;
+    return loadedPreviewUrl ? [loadedPreviewUrl] : [];
+  });
 
   // The background lives on the record as a key; this is the viewable copy,
   // replaced in place when a new file is uploaded.
@@ -565,6 +590,7 @@ export default function MappingForm() {
 
       if (!id) {
         setTemplate(null);
+        setSelectedMockupUrls([]);
         return null;
       }
 
@@ -581,7 +607,7 @@ export default function MappingForm() {
 
         if (prefill && detail) {
           const variants = asArray(detail.variants);
-          const placeholder = asArray(detail.placeholders)[0];
+          const placeholder = artworkPlaceholder(detail.placeholders);
 
           setValues((current) => ({
             ...current,
@@ -679,11 +705,21 @@ export default function MappingForm() {
       if (!productId) {
         setGelatoVariants([]);
         setTemplate(null);
+        setSelectedMockupUrls([]);
         return;
       }
 
       // Show whatever the list gave us while the detail request is in flight.
       setGelatoVariants(asArray(listed?.variants));
+
+      const listedImages = asArray(listed?.images)
+        .map((img) => (typeof img === "string" ? img : img?.url))
+        .filter(Boolean);
+      if (listedImages.length > 0) {
+        setSelectedMockupUrls(listedImages);
+      } else if (firstString(listed?.previewUrl)) {
+        setSelectedMockupUrls([listed.previewUrl]);
+      }
 
       if (firstString(listed?.previewUrl)) {
         setValue("gelatoPreviewUrl", listed.previewUrl);
@@ -722,6 +758,15 @@ export default function MappingForm() {
           setValue("gelatoTemplateName", "");
           setTemplate(null);
         }
+
+        const detailImages = asArray(detail?.images)
+          .map((img) => (typeof img === "string" ? img : img?.url))
+          .filter(Boolean);
+        if (detailImages.length > 0) {
+          setSelectedMockupUrls(detailImages);
+        } else if (firstString(detail?.previewUrl)) {
+          setSelectedMockupUrls([detail.previewUrl]);
+        }
       } catch (error) {
         console.error("[mapping] Gelato product detail:", error);
         setPickerError(error.message || "That Gelato product could not be loaded.");
@@ -747,8 +792,8 @@ export default function MappingForm() {
     if (!stillValid) {
       setValues((current) => ({
         ...current,
-        gelatoPlaceholderName: placeholders[0].name,
-        gelatoPrintAreaName: placeholders[0].printArea,
+        gelatoPlaceholderName: artworkPlaceholder(placeholders).name,
+        gelatoPrintAreaName: artworkPlaceholder(placeholders).printArea,
       }));
     }
     // `values.gelatoPlaceholderName` is intentionally the only value watched.
@@ -864,6 +909,14 @@ export default function MappingForm() {
   const textAreas = asArray(template?.textPlaceholders);
 
   const layers = useMemo(() => normalizeLayers(values.layers), [values.layers]);
+
+  // Text areas the Gelato template has that this design does not know by name:
+  // the template was edited in Gelato after the design was saved.
+  const textOutOfStep = useMemo(() => {
+    const known = new Set(layers.map((layer) => layer.name));
+
+    return textAreas.some((area) => area?.name && !known.has(area.name));
+  }, [layers, textAreas]);
 
   /**
    * What the print area alone would suggest — shown, not applied.
@@ -984,6 +1037,16 @@ export default function MappingForm() {
     values.gelatoPreviewUrl ||
     values.shopifyProductImageUrl;
 
+  const allPreviewUrls = useMemo(() => {
+    if (selectedMockupUrls.length > 0) {
+      return selectedMockupUrls;
+    }
+    if (previewUrl) {
+      return [previewUrl];
+    }
+    return [];
+  }, [selectedMockupUrls, previewUrl]);
+
   return (
     <Page
       title={isNew ? "Add product mapping" : "Edit product mapping"}
@@ -1051,7 +1114,11 @@ export default function MappingForm() {
                 {values.shopifyProductId ? (
                   <InlineStack gap="300" blockAlign="center">
                     <Thumbnail
-                      source={values.shopifyProductImageUrl || ""}
+                      source={
+                        values.shopifyProductImageUrl ||
+                        allPreviewUrls[0] ||
+                        ImageIcon
+                      }
                       alt={values.shopifyProductTitle}
                       size="large"
                     />
@@ -1147,6 +1214,25 @@ export default function MappingForm() {
                       </Button>
                     }
                   />
+
+                  {template && textOutOfStep ? (
+                    <Banner
+                      tone="warning"
+                      title="This template has changed in Gelato"
+                      action={{
+                        content: "Refresh from Gelato",
+                        onAction: () => loadTemplate(values.gelatoTemplateId),
+                        loading: templateLoading,
+                      }}
+                    >
+                      <Text as="p">
+                        Its text areas were renamed or added since this design
+                        was saved. Refresh, check the layers, then save, so the
+                        storefront shows the new titles. Layer positions are
+                        kept.
+                      </Text>
+                    </Banner>
+                  ) : null}
 
                   {template ? (
                     <Banner tone="success" title={`Loaded “${template.name}”`}>
@@ -1314,23 +1400,35 @@ export default function MappingForm() {
                   </Text>
                 </InlineStack>
 
-                {previewUrl ? (
-                  <Box
-                    background="bg-surface-secondary"
-                    borderRadius="200"
-                    padding="300"
+                {allPreviewUrls.length > 0 ? (
+                  <InlineGrid
+                    columns={{ xs: 1, sm: Math.min(allPreviewUrls.length, 3) }}
+                    gap="300"
                   >
-                    <img
-                      src={previewUrl}
-                      alt={values.shopifyProductTitle || "Template preview"}
-                      style={{
-                        width: "100%",
-                        maxHeight: "260px",
-                        objectFit: "contain",
-                        display: "block",
-                      }}
-                    />
-                  </Box>
+                    {allPreviewUrls.map((url, index) => (
+                      <Box
+                        key={`${url}-${index}`}
+                        background="bg-surface-secondary"
+                        borderRadius="200"
+                        padding="300"
+                      >
+                        <img
+                          src={url}
+                          alt={
+                            values.shopifyProductTitle
+                              ? `${values.shopifyProductTitle} preview ${index + 1}`
+                              : `Template preview ${index + 1}`
+                          }
+                          style={{
+                            width: "100%",
+                            maxHeight: "260px",
+                            objectFit: "contain",
+                            display: "block",
+                          }}
+                        />
+                      </Box>
+                    ))}
+                  </InlineGrid>
                 ) : (
                   <Box padding="400" background="bg-surface-secondary" borderRadius="200">
                     <Text as="p" tone="subdued">
@@ -1681,7 +1779,11 @@ export default function MappingForm() {
                   <BlockStack gap="300">
                     <LayerPreview
                       layers={layers}
-                      productImageUrl={values.shopifyProductImageUrl}
+                      // A product created for this design often has no photo
+                      // yet; the Gelato preview beats an empty white box.
+                      productImageUrl={
+                        values.shopifyProductImageUrl || allPreviewUrls[0] || ""
+                      }
                       selectedName={selectedLayerName}
                       onSelect={setSelectedLayerName}
                     />

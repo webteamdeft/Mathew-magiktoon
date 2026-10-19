@@ -657,6 +657,10 @@ test("a key that cannot be signed falls back rather than blanking the row", () =
       "https://cdn.example.com/a.png",
     );
   } finally {
-    process.env.ARTWORK_SIGNING_SECRET = secret;
+    if (secret === undefined) {
+      delete process.env.ARTWORK_SIGNING_SECRET;
+    } else {
+      process.env.ARTWORK_SIGNING_SECRET = secret;
+    }
   }
 });

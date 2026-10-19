@@ -118,6 +118,20 @@ test("blank text is left out so the template keeps its own wording", () => {
   assert.deepEqual(text, []);
 });
 
+test("duplicate text placeholder names in the template are deduplicated", () => {
+  const variantWithDupes = {
+    ...TEMPLATE.variants[0],
+    textPlaceholders: [
+      { name: "Year", text: "1972" },
+      { name: "Year", text: "SINCE" },
+    ],
+  };
+
+  const text = buildTextPlaceholders(variantWithDupes, MAPPING, { Year: "2026" });
+
+  assert.deepEqual(text, [{ name: "Year", text: "2026" }]);
+});
+
 test("the mapped variant is chosen, not merely the first", () => {
   assert.equal(pickTemplateVariant(TEMPLATE, MAPPING).id, "var_white");
   assert.equal(
@@ -358,4 +372,47 @@ test("artwork that answers with an error is refused just as clearly", async () =
   assert.equal(result.code, "ARTWORK_UNREACHABLE");
   assert.match(result.detail, /403/);
   assert.equal(gelato.calls.length, 0);
+});
+
+test("text typed under a field's OLD name still reaches Gelato after the template is renamed", () => {
+  // The design was saved when Gelato called these "Copy of … Text 4"; the
+  // template has since renamed them. The storefront still submits the old names.
+  const variant = {
+    textPlaceholders: [
+      { name: "Name (bottom)", text: "Candy" },
+      { name: "& (fixed)", text: "&" },
+      { name: "Name (top)", text: "Emily" },
+    ],
+  };
+  const mapping = {
+    layers: [
+      { type: "text", name: "Copy of Text 4", text: { content: "Emily" } },
+      { type: "text", name: "Copy of Copy of Text 4", text: { content: "&" } },
+      { type: "text", name: "Copy of Copy of Copy of Text 4", text: { content: "Candy" } },
+    ],
+  };
+
+  const sent = buildTextPlaceholders(variant, mapping, {
+    "Copy of Text 4": "preeti",
+    "Copy of Copy of Text 4": "&",
+    "Copy of Copy of Copy of Text 4": "Teddy",
+  });
+
+  assert.deepEqual(sent, [
+    { name: "Name (bottom)", text: "Teddy" },
+    { name: "Name (top)", text: "preeti" },
+  ]);
+});
+
+test("an untouched multi-line default is left to Gelato, not flattened", () => {
+  const variant = {
+    textPlaceholders: [{ name: "Top text", text: "Effortless grace,\nunforgettable presence" }],
+  };
+
+  // A single-line input returns the default with its line break stripped.
+  const sent = buildTextPlaceholders(variant, {}, {
+    "Top text": "Effortless grace,unforgettable presence",
+  });
+
+  assert.deepEqual(sent, []);
 });

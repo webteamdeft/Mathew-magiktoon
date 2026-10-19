@@ -20,6 +20,7 @@ import {
   listGelatoStoreProducts,
   tryGetGelatoTemplateDetail,
 } from "./gelato-catalog.server.js";
+import sharp from "sharp";
 import { asArray, toTrimmedString } from "./normalize.js";
 
 /**
@@ -30,11 +31,49 @@ import { asArray, toTrimmedString } from "./normalize.js";
  */
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * How long a result WITHOUT the product's own gallery is reused.
+ *
+ * A design created moments ago has no gallery yet: its Gelato store product is
+ * still being published, or Gelato has not finished rendering its mockups. The
+ * template preview stands in, but caching that stand-in for six hours kept a
+ * brand-new product showing one wrong image — or none — long after its real
+ * gallery existed. A minute is short enough that the gallery appears on the
+ * next visit, and long enough that a busy page does not hammer Gelato.
+ */
+const FALLBACK_TTL_MS = 60 * 1000;
+
+/**
+ * How stale the store catalog may be before a design that is NOT in it forces
+ * a re-read.
+ *
+ * The catalog is otherwise kept for six hours, which is fine for designs it
+ * already contains. A product published after it was read was invisible for
+ * the rest of those six hours.
+ */
+const CATALOG_MISS_REFRESH_MS = 60 * 1000;
+
 /** How long the browser may cache the image bytes. */
 export const IMAGE_CACHE_SECONDS = 3600;
 
 /** cacheKey -> { urls: string[], expiresAt } */
 const cache = new Map();
+
+/**
+ * Image bytes, so a thumbnail is not re-downloaded from Gelato on every view.
+ *
+ * Keyed on the URL's path (which identifies the file; the signature changes
+ * run to run) plus the requested width. Bounded: the oldest entry is dropped
+ * once the limit is reached.
+ */
+const imageCache = new Map();
+const IMAGE_CACHE_LIMIT = 200;
+
+/**
+ * Widths a caller may ask for. Snapping to a few sizes keeps the byte cache
+ * from filling with one entry per arbitrary `?w=` value.
+ */
+const IMAGE_WIDTHS = [160, 240, 320, 480, 640, 1024];
 
 /**
  * What a mapping's images actually depend on.
@@ -92,48 +131,86 @@ async function findStoreProductFor(mapping, { now = Date.now } = {}) {
     return null;
   }
 
-  if (!catalogCache || catalogCache.expiresAt <= now()) {
-    try {
-      const result = await listGelatoStoreProducts({ offset: 0, limit: 100 });
+  const match = () => {
+    // Preferred link: Gelato stamps the Shopify product id onto `externalId`
+    // when it publishes to a connected store.
+    const byExternalId = catalogCache.items.find(
+      (product) => toTrimmedString(product.externalId) === wanted,
+    );
 
-      catalogCache = {
-        items: asArray(result?.items),
-        expiresAt: now() + CACHE_TTL_MS,
-      };
-    } catch (error) {
-      console.error("[gelato-preview] catalog lookup failed:", error);
+    if (byExternalId) {
+      return byExternalId;
+    }
+
+    // Fallback: match the template's name to a store product's title. Needed
+    // whenever the Gelato store is connected to a DIFFERENT Shopify store than
+    // the one being mapped, in which case no externalId can ever match — which
+    // is the case here, and would otherwise leave every design with one image.
+    if (!templateName) {
       return null;
+    }
+
+    return (
+      catalogCache.items.find(
+        (product) => toTrimmedString(product.title).toLowerCase() === templateName,
+      ) || null
+    );
+  };
+
+  if (!catalogCache || catalogCache.expiresAt <= now()) {
+    if (!(await refreshCatalog({ now }))) return null;
+  }
+
+  const found = match();
+
+  if (found) {
+    return found;
+  }
+
+  // Not in the catalog we hold. If that copy is more than a minute old, the
+  // product may simply have been published since — the usual case for a design
+  // created just now — so read it again once before giving up.
+  if (now() - catalogCache.fetchedAt > CATALOG_MISS_REFRESH_MS) {
+    if (await refreshCatalog({ now })) {
+      return match();
     }
   }
 
-  // Preferred link: Gelato stamps the Shopify product id onto `externalId`
-  // when it publishes to a connected store.
-  const byExternalId = catalogCache.items.find(
-    (product) => toTrimmedString(product.externalId) === wanted,
-  );
+  return null;
+}
 
-  if (byExternalId) {
-    return byExternalId;
+/** One catalog read at a time, however many designs ask at once. */
+let catalogRequest = null;
+
+async function refreshCatalog({ now }) {
+  if (!catalogRequest) {
+    catalogRequest = listGelatoStoreProducts({ offset: 0, limit: 100 })
+      .then((result) => {
+        catalogCache = {
+          items: asArray(result?.items),
+          fetchedAt: now(),
+          expiresAt: now() + CACHE_TTL_MS,
+        };
+        return true;
+      })
+      .catch((error) => {
+        console.error("[gelato-preview] catalog lookup failed:", error);
+        return false;
+      })
+      .finally(() => {
+        catalogRequest = null;
+      });
   }
 
-  // Fallback: match the template's name to a store product's title. Needed
-  // whenever the Gelato store is connected to a DIFFERENT Shopify store than
-  // the one being mapped, in which case no externalId can ever match — which is
-  // the case here, and would otherwise leave every design with one image.
-  if (!templateName) {
-    return null;
-  }
-
-  return (
-    catalogCache.items.find(
-      (product) => toTrimmedString(product.title).toLowerCase() === templateName,
-    ) || null
-  );
+  // A failed re-read keeps the previous copy, so a Gelato hiccup never makes
+  // designs that were already found lose their gallery.
+  return (await catalogRequest) || Boolean(catalogCache);
 }
 
 /** Test seam: drop everything currently cached. */
 export function clearPreviewCache() {
   cache.clear();
+  imageCache.clear();
   catalogCache = null;
 }
 
@@ -177,6 +254,11 @@ export async function resolveTemplateImages(
   const urls = [];
   const seen = new Set();
 
+  // Whether the product's own mockup gallery was found. Only that is cached for
+  // the full lifetime; anything less is a stand-in for a design whose gallery
+  // may appear any moment (see FALLBACK_TTL_MS).
+  let hasGallery = false;
+
   const add = (value) => {
     const url = toTrimmedString(value);
 
@@ -216,6 +298,8 @@ export async function resolveTemplateImages(
         add(image.url);
       }
 
+      hasGallery = urls.length > 0;
+
       add(product?.previewUrl);
     } catch (error) {
       console.error("[gelato-preview] store product lookup failed:", error);
@@ -245,7 +329,10 @@ export async function resolveTemplateImages(
     return urls;
   }
 
-  cache.set(key, { urls, expiresAt: now() + CACHE_TTL_MS });
+  cache.set(key, {
+    urls,
+    expiresAt: now() + (hasGallery ? CACHE_TTL_MS : FALLBACK_TTL_MS),
+  });
 
   return urls;
 }
@@ -258,15 +345,42 @@ export async function resolveTemplatePreviewUrl(mapping, options) {
 }
 
 /**
+ * The nearest allowed width at or above the one asked for, or 0 for "the
+ * original". Anything unparseable is the original, as before `?w=` existed.
+ */
+export function snapImageWidth(value) {
+  const wanted = Number(value);
+
+  if (!Number.isFinite(wanted) || wanted <= 0) return 0;
+
+  return (
+    IMAGE_WIDTHS.find((width) => width >= wanted) ||
+    IMAGE_WIDTHS[IMAGE_WIDTHS.length - 1]
+  );
+}
+
+function rememberImage(key, entry) {
+  if (imageCache.size >= IMAGE_CACHE_LIMIT) {
+    imageCache.delete(imageCache.keys().next().value);
+  }
+
+  imageCache.set(key, entry);
+}
+
+/**
  * Fetch the preview image itself.
  *
- * The bytes are streamed back rather than redirected to, so the storefront
+ * The bytes are served back rather than redirected to, so the storefront
  * never sees a presigned URL that could be shared and then die. A 403 from a
  * cached-but-expired signature retries once against a freshly resolved URL.
+ *
+ * `width` asks for a scaled-down copy, for thumbnails: Gelato's originals are
+ * 2048px, which made a strip of small tiles download megabytes. Either way the
+ * bytes are kept in memory, so repeat views do not wait on Gelato again.
  */
 export async function fetchTemplatePreview(
   mapping,
-  { fetchImpl = fetch, index = 0 } = {},
+  { fetchImpl = fetch, index = 0, width = 0, now = Date.now } = {},
 ) {
   let urls = await resolveTemplateImages(mapping);
   let url = urls[index] || urls[0];
@@ -275,11 +389,22 @@ export async function fetchTemplatePreview(
     return { ok: false, status: 404, error: "This design has no preview image." };
   }
 
+  const size = snapImageWidth(width);
+  const cacheKeyFor = (value) => `${value.split("?")[0]}|${size}`;
+
+  const cached = imageCache.get(cacheKeyFor(url));
+
+  if (cached && cached.expiresAt > now()) {
+    return { ok: true, body: cached.body, contentType: cached.contentType };
+  }
+
   let response = await fetchImpl(url);
 
   if (response.status === 403 || response.status === 401) {
-    // The signature died between resolving and using it.
-    cache.delete(mapping.id);
+    // The signature died between resolving and using it. The cache is keyed by
+    // `previewCacheKey`, not the bare id — deleting by id cleared nothing, so
+    // the retry reused the same dead URL and the image came back blank.
+    cache.delete(previewCacheKey(mapping));
     urls = await resolveTemplateImages(mapping);
     url = urls[index] || urls[0];
     response = await fetchImpl(url);
@@ -293,9 +418,27 @@ export async function fetchTemplatePreview(
     };
   }
 
-  return {
-    ok: true,
-    body: response.body,
-    contentType: response.headers.get("content-type") || "image/png",
-  };
+  let body = Buffer.from(await response.arrayBuffer());
+  let contentType = response.headers.get("content-type") || "image/png";
+
+  if (size > 0) {
+    try {
+      body = await sharp(body)
+        .resize({ width: size, withoutEnlargement: true })
+        .jpeg({ quality: 82 })
+        .toBuffer();
+      contentType = "image/jpeg";
+    } catch (error) {
+      // An image sharp cannot read is still worth showing at full size.
+      console.error("[gelato-preview] thumbnail resize failed:", error);
+    }
+  }
+
+  rememberImage(cacheKeyFor(url), {
+    body,
+    contentType,
+    expiresAt: now() + CACHE_TTL_MS,
+  });
+
+  return { ok: true, body, contentType };
 }

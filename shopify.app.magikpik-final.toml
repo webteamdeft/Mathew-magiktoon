@@ -16,4 +16,6 @@ scopes = "read_orders,write_metaobject_definitions,write_metaobjects,write_produ
 redirect_urls = [ "https://grows-idol-fda-genres.trycloudflare.com/api/auth" ]
 
 [build]
-automatically_update_urls_on_dev = true
+# See the note in shopify.app.toml: leaving this true makes `shopify app dev`
+# repoint the live app at a throwaway tunnel that dies with the terminal.
+automatically_update_urls_on_dev = false

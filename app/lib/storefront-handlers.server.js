@@ -332,6 +332,23 @@ export async function storefrontGenerateAction({ request }) {
 }
 
 export function resolveStorefrontAppBaseUrl(request) {
+  // In production the app is served from a fixed host (Render), so
+  // SHOPIFY_APP_URL is authoritative and nothing else may override it.
+  //
+  // The sniffing below exists only because a dev tunnel hostname changes on
+  // every `shopify app dev` restart. Running it in production is actively
+  // harmful on two counts:
+  //
+  //   - `shopify.app.toml` ships inside the Docker image, so the disk read
+  //     could inject a long-dead `trycloudflare.com` host into artwork URLs
+  //     handed to Gelato, producing orders that print nothing.
+  //   - Trusting the `Host` header lets a caller point every subsequent
+  //     signed URL at a host of their choosing, because the value is written
+  //     back into `process.env` for the whole process.
+  if (process.env.NODE_ENV === "production") {
+    return toTrimmedString(process.env.SHOPIFY_APP_URL).replace(/\/+$/, "");
+  }
+
   // 1. If an incoming request has a Cloudflare tunnel host or public app host:
   if (request) {
     try {

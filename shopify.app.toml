@@ -3,13 +3,18 @@
 
 client_id = "6ceb15510d9cb9d09adf1d9df1dfef41"
 name = "MagikPik"
-application_url = "https://grows-idol-fda-genres.trycloudflare.com"
+application_url = "https://mathew-magiktoon.onrender.com"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+# Must stay `false`. When true, every `shopify app dev` run overwrites the URLs
+# in this file *and* in Shopify's app record with that session's throwaway
+# Cloudflare tunnel hostname. Stopping the dev terminal then kills the tunnel,
+# and merchants opening the app get Cloudflare error 1033. Local development
+# now uses a separate config file instead (see README).
+automatically_update_urls_on_dev = false
 [app_proxy]
-url = "https://grows-idol-fda-genres.trycloudflare.com"
+url = "https://mathew-magiktoon.onrender.com"
 prefix = "apps"
 subpath = "magiktoon"
 
@@ -46,7 +51,9 @@ scopes = "write_app_proxy,write_products,write_metaobjects,write_metaobject_defi
 
 [auth]
 redirect_urls = [
-  "https://grows-idol-fda-genres.trycloudflare.com/api/auth"
+  "https://mathew-magiktoon.onrender.com/auth/callback",
+  "https://mathew-magiktoon.onrender.com/auth/shopify/callback",
+  "https://mathew-magiktoon.onrender.com/api/auth/callback"
 ]
 
 [product.metafields.app.demo_info]

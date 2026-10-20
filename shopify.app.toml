@@ -3,13 +3,13 @@
 
 client_id = "6ceb15510d9cb9d09adf1d9df1dfef41"
 name = "MagikPik"
-application_url = "https://edinburgh-dos-cameron-log.trycloudflare.com"
+application_url = "https://grows-idol-fda-genres.trycloudflare.com"
 embedded = true
 
 [build]
 automatically_update_urls_on_dev = true
 [app_proxy]
-url = "https://edinburgh-dos-cameron-log.trycloudflare.com"
+url = "https://grows-idol-fda-genres.trycloudflare.com"
 prefix = "apps"
 subpath = "magiktoon"
 
@@ -46,7 +46,7 @@ scopes = "write_app_proxy,write_products,write_metaobjects,write_metaobject_defi
 
 [auth]
 redirect_urls = [
-  "https://edinburgh-dos-cameron-log.trycloudflare.com/api/auth"
+  "https://grows-idol-fda-genres.trycloudflare.com/api/auth"
 ]
 
 [product.metafields.app.demo_info]

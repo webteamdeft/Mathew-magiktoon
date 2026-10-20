@@ -1,4 +1,5 @@
 import {
+  isRouteErrorResponse,
   Link,
   Outlet,
   useLoaderData,
@@ -122,7 +123,26 @@ export default function AppLayout() {
  * and every embedded admin page fails instead of silently re-authenticating.
  */
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  const error = useRouteError();
+
+  // `boundary.error` injects `error.data` as HTML. When an Admin API call fails,
+  // the library re-throws the upstream JSON body, which React Router parses
+  // into an object — and the merchant sees a bare "[object Object]". Show the
+  // status and body instead so the failure is actually diagnosable.
+  if (isRouteErrorResponse(error) && error.data && typeof error.data !== "string") {
+    console.error("[app] route error response:", error.status, error.data);
+
+    return (
+      <div style={{ padding: 24, fontFamily: "monospace" }}>
+        <h2>Request failed ({error.status} {error.statusText})</h2>
+        <pre style={{ whiteSpace: "pre-wrap" }}>
+          {JSON.stringify(error.data, null, 2)}
+        </pre>
+      </div>
+    );
+  }
+
+  return boundary.error(error);
 }
 
 /**

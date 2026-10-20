@@ -2,7 +2,7 @@
 
 client_id = "c262957a43df85c0cf534aaf3115b07a"
 name = "MagikPik"
-application_url = "https://example.com"
+application_url = "https://grows-idol-fda-genres.trycloudflare.com"
 embedded = true
 
 [webhooks]
@@ -13,7 +13,7 @@ api_version = "2026-10"
 scopes = "read_orders,write_metaobject_definitions,write_metaobjects,write_products"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://grows-idol-fda-genres.trycloudflare.com/api/auth" ]
 
 [build]
 automatically_update_urls_on_dev = true

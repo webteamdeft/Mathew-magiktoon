@@ -13,6 +13,10 @@ node_modules
 /prisma/dev.sqlite-journal
 database.sqlite
 
+# Local database/file backups. These contain Session rows with live Shopify
+# access tokens, so they must never reach a remote.
+backups/
+
 .env
 .env.*
 

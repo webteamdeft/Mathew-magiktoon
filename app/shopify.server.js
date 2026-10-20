@@ -16,7 +16,7 @@ import prisma from "./db.server.js";
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET,
-  apiVersion: ApiVersion.October24,
+  apiVersion: ApiVersion.July26,
   scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
@@ -24,13 +24,17 @@ const shopify = shopifyApp({
   distribution: AppDistribution.SingleMerchant,
   future: {
     unstable_newEmbeddedAuthStrategy: true,
+    // Public apps created after 2026-04-01 get a 403 from the Admin GraphQL API
+    // when they present a non-expiring offline token, so request expiring ones
+    // (refreshed automatically via the Session.refreshToken columns).
+    expiringOfflineAccessTokens: true,
   },
 });
 
 export default shopify;
 
 export const apiVersion =
-  ApiVersion.October24;
+  ApiVersion.July26;
 
 export const addDocumentResponseHeaders =
   shopify.addDocumentResponseHeaders;

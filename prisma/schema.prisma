@@ -3,8 +3,13 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  // Postgres, not SQLite: Render's container filesystem is wiped on every
+  // deploy, so a `file:` database lost every session, mapping and prompt each
+  // time the service rebuilt. `provider` cannot read an env var, so local
+  // development uses Postgres too — point DATABASE_URL at the development
+  // database, never the production one.
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Session {

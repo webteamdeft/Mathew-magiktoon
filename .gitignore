@@ -17,6 +17,13 @@ database.sqlite
 # access tokens, so they must never reach a remote.
 backups/
 
+# Database exports. Order rows carry customer names, addresses and email
+# addresses in `requestPayload.shippingAddress`, and this repository is
+# public. Keep exports outside the repo; pass their path to
+# scripts/restore-from-export.mjs instead.
+magiktoon-*export*.json
+*-export-[0-9]*.json
+
 .env
 .env.*
 

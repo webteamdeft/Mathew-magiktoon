@@ -331,6 +331,17 @@ export async function storefrontGenerateAction({ request }) {
   });
 }
 
+/**
+ * Hosts that only exist while a developer's machine is running: `shopify app
+ * dev` mints a fresh `trycloudflare.com` name on every start and it stops
+ * resolving the moment that terminal closes.
+ */
+function isEphemeralHost(value) {
+  return /(^|\/\/|\.)(trycloudflare\.com|localhost|127\.0\.0\.1|ngrok[a-z.-]*)(:|\/|$)/i.test(
+    value,
+  );
+}
+
 export function resolveStorefrontAppBaseUrl(request) {
   // In production the app is served from a fixed host (Render), so
   // SHOPIFY_APP_URL is authoritative and nothing else may override it.
@@ -346,7 +357,39 @@ export function resolveStorefrontAppBaseUrl(request) {
   //     signed URL at a host of their choosing, because the value is written
   //     back into `process.env` for the whole process.
   if (process.env.NODE_ENV === "production") {
-    return toTrimmedString(process.env.SHOPIFY_APP_URL).replace(/\/+$/, "");
+    const configured = toTrimmedString(process.env.SHOPIFY_APP_URL).replace(
+      /\/+$/,
+      "",
+    );
+
+    // A development tunnel in SHOPIFY_APP_URL is always a misconfiguration
+    // here: those hostnames die with the terminal that created them. Left
+    // alone it mints artwork URLs nothing can fetch, and the only visible
+    // symptom is "the preview could not be created" — the app failing to
+    // reach its own asset, with the real cause three layers down in a log.
+    //
+    // Falling back to the host the request actually arrived on is strictly
+    // better than returning a hostname known to be dead. The value is not
+    // written back to `process.env`: a forged `Host` header then breaks one
+    // response instead of poisoning every later one in the process.
+    if (!configured || isEphemeralHost(configured)) {
+      console.error(
+        `[storefront] SHOPIFY_APP_URL is ${
+          configured ? `a dev tunnel (${configured})` : "unset"
+        } in production — falling back to the request host. ` +
+          "Set it to the deployed URL.",
+      );
+
+      const host = request?.headers?.get?.("host");
+
+      if (host) {
+        const proto = request.headers.get("x-forwarded-proto") || "https";
+
+        return `${proto}://${host}`.replace(/\/+$/, "");
+      }
+    }
+
+    return configured;
   }
 
   // 1. If an incoming request has a Cloudflare tunnel host or public app host:

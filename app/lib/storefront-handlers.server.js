@@ -452,6 +452,22 @@ const MOCKUP_JOB_TTL_MS = 15 * 60 * 1000;
 const MAX_SYNCHRONOUS_WAIT_MS = 25000;
 
 /**
+ * How long the first click waits for the wrapped stand-in previews.
+ *
+ * Shopify gives an app proxy request about 60 seconds before it answers the
+ * customer with its own 504, and that budget covers everything below. The
+ * wrap render is not cheap: it loads every template view, reads the artwork,
+ * composites each view with sharp and stores the results — about nineteen
+ * round-trips to object storage once assets stopped living on local disk.
+ * Awaiting it without a bound spent the whole budget and returned nothing,
+ * which the storefront reports as "the preview could not be created".
+ *
+ * Bounded, a slow render simply misses this response: the work carries on in
+ * the background and the browser's next poll picks it up.
+ */
+const WRAP_PREVIEW_WAIT_MS = 12000;
+
+/**
  * POST → render a Gelato mockup of the generated artwork (Milestone 5).
  *
  * Body: { productId, mappingId, generationId, text }
@@ -670,7 +686,7 @@ export async function storefrontMockupAction({ request }) {
   // customer's design wrapped onto Gelato's own mockup photos, while the live
   // Gelato render carries on in the background. The browser keeps polling and
   // swaps the live render in when it lands.
-  if (!body?.poll && job.status !== "SUCCESS") {
+  if (job.status !== "SUCCESS") {
     if (!job.previews) {
       job.previews = renderMugWrapPreviews({
         shop: auth.shop,
@@ -683,7 +699,17 @@ export async function storefrontMockupAction({ request }) {
       });
     }
 
-    const previews = (await job.previews).map((item) => ({
+    // Bounded: see WRAP_PREVIEW_WAIT_MS. `job.previews` keeps running when the
+    // race is lost, so a render that is merely slow still reaches the next
+    // poll rather than being thrown away and started again.
+    const rendered = await Promise.race([
+      job.previews,
+      new Promise((resolve) => {
+        setTimeout(() => resolve(null), WRAP_PREVIEW_WAIT_MS).unref?.();
+      }),
+    ]);
+
+    const previews = asArray(rendered).map((item) => ({
       url: buildSignedAssetUrl(item.key, { baseUrl: appBaseUrl }),
       key: item.key,
       approximate: true,

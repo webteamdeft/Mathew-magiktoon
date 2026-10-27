@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { renderCustomizePage } from "../app/lib/customize-page.server.js";
+import {
+  renderCustomizePage,
+  resolveProductNoun,
+} from "../app/lib/customize-page.server.js";
 
 const MAPPING = {
   mappingId: "map_1",
@@ -150,8 +153,10 @@ test("a design with no text areas omits Step 2 entirely", () => {
   assert.equal((html.match(/<input[^>]*data-mtcp-text[^>]*>/g) || []).length, 0);
 });
 
-test("the heading falls back to the product title with no product type", () => {
-  assert.ok(render().includes("Personalise Your Classic Mug"));
+test("the heading finds the noun in the title with no product type", () => {
+  // "Personalise Your Classic Mug" was the old behaviour; the noun alone
+  // reads better and is what the title search now produces.
+  assert.ok(render().includes("Personalise Your Mug"));
 });
 
 test("steps 3 and 4 render disabled, as the design shows them", () => {
@@ -403,3 +408,44 @@ test("a design with no estimate still gets a usable one", () => {
 });
 
 
+
+/**
+ * Which noun the panel heading uses.
+ *
+ * Reported from the live site: the heading read "Personalise Your Print
+ * Material". Gelato stamps that product type onto everything it publishes
+ * into Shopify, and the heading trusted it. The noun is in the title.
+ */
+test("the noun comes from the title when Gelato's generic type is all there is", () => {
+  assert.equal(
+    resolveProductNoun("Her Fashion Icon Mug, 11oz Ceramic", "Print Material"),
+    "Mug",
+  );
+});
+
+test("a longer noun wins over a shorter one it contains", () => {
+  assert.equal(resolveProductNoun("Custom Tote Bag, Natural Cotton", ""), "Tote Bag");
+  assert.equal(resolveProductNoun("Clear Phone Case for iPhone", ""), "Phone Case");
+});
+
+test("a plural in the title still yields the singular noun", () => {
+  assert.equal(
+    resolveProductNoun("Birthday Superhero Cards | A6 Folded, Pack of 10", ""),
+    "Card",
+  );
+});
+
+test("nouns match whole words only", () => {
+  // "Print" inside "Fingerprint" and "Cap" inside "Capsule" both used to be
+  // the kind of thing a bare substring search gets wrong.
+  assert.equal(resolveProductNoun("Fingerprint Keepsake Capsule", ""), "Product");
+});
+
+test("a product type a shopper would recognise is still used", () => {
+  assert.equal(resolveProductNoun("Something Unrecognisable", "Ceramic Mug"), "Ceramic Mug");
+});
+
+test("nothing recognisable anywhere gives a vague but never wrong noun", () => {
+  assert.equal(resolveProductNoun("Something Unrecognisable", "Print Material"), "Product");
+  assert.equal(resolveProductNoun("", ""), "Product");
+});

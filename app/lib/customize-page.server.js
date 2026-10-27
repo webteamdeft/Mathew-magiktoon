@@ -3079,6 +3079,94 @@ const SCRIPT = `
 `;
 
 /**
+ * The nouns these products actually are, longest first so that "Tote Bag"
+ * wins over "Bag" and "Phone Case" over "Case".
+ *
+ * A list rather than a guess at the last word of the title: "11oz Ceramic"
+ * ends the mug's title, and "Personalise Your Ceramic" is no better than
+ * "Print Material". Anything not listed falls through to the product type.
+ */
+const PRODUCT_NOUNS = [
+  "Phone Case",
+  "Tote Bag",
+  "Water Bottle",
+  "Mouse Mat",
+  "Jigsaw Puzzle",
+  "Greeting Card",
+  "Tea Towel",
+  "Sweatshirt",
+  "Notebook",
+  "Calendar",
+  "Cushion",
+  "Blanket",
+  "T-Shirt",
+  "Hoodie",
+  "Sticker",
+  "Coaster",
+  "Apron",
+  "Canvas",
+  "Poster",
+  "Puzzle",
+  "Bottle",
+  "Pillow",
+  "Magnet",
+  "Keyring",
+  "Card",
+  "Print",
+  "Frame",
+  "Mug",
+  "Cap",
+  "Hat",
+  "Bag",
+];
+
+/**
+ * Product types Gelato and Shopify set that name no product a shopper knows.
+ *
+ * "Print Material" is on every product Gelato publishes, which is why the
+ * panel read "Personalise Your Print Material" in production.
+ */
+const GENERIC_PRODUCT_TYPES = new Set([
+  "print material",
+  "print materials",
+  "print product",
+  "merchandise",
+  "product",
+  "other",
+]);
+
+/**
+ * The noun for "Personalise Your ___", from the product title where it can be
+ * found and the product type otherwise.
+ *
+ * Neither source is reliable alone: the type is usually Gelato's boilerplate,
+ * and the whole title ("Her Fashion Icon Mug, 11oz Ceramic") is far too long
+ * for a heading. Nothing recognisable in either gives "Product", which is
+ * vague but never wrong.
+ */
+export function resolveProductNoun(title, type) {
+  const haystack = toTrimmedString(title).toLowerCase();
+
+  const found = PRODUCT_NOUNS.find((noun) => {
+    // Word-bounded so "Cap" does not match "Capsule" and "Print" does not
+    // match "Fingerprint".
+    const pattern = new RegExp(`\\b${noun.toLowerCase().replace(/[-\s]/g, "[-\\s]")}s?\\b`);
+
+    return pattern.test(haystack);
+  });
+
+  if (found) return found;
+
+  const trimmedType = toTrimmedString(type);
+
+  if (trimmedType && !GENERIC_PRODUCT_TYPES.has(trimmedType.toLowerCase())) {
+    return trimmedType;
+  }
+
+  return "Product";
+}
+
+/**
  * Render the full customization page.
  *
  * @param {object} params
@@ -3140,12 +3228,21 @@ export function renderCustomizePage({
       designImage(proxyBase, mapping),
   );
 
-  // "Personalise Your Mug" reads better than the full product title. Shopify's
-  // product type supplies the noun; the title is the fallback. It is why the
-  // heading must stay templated: hard-coding "Mug" would misname every other
-  // product the app is mapped onto.
-  const productNoun =
-    escapeHtml(product?.type) || escapeHtml(mapping?.productTitle) || "Product";
+  // "Personalise Your Mug" reads better than the full product title, so the
+  // heading is templated rather than hard-coded — "Mug" in the markup would
+  // misname every other product the app is mapped onto.
+  //
+  // The product TYPE used to supply the noun, which read well in testing and
+  // badly in production: Gelato publishes everything it creates into Shopify
+  // as "Print Material", so the panel announced "Personalise Your Print
+  // Material". Accurate for a fulfiller, meaningless to a customer.
+  //
+  // The title carries the real noun — "Her Fashion Icon Mug, 11oz Ceramic" —
+  // so it is searched first, and the product type is used only when it says
+  // something a shopper would recognise.
+  const productNoun = escapeHtml(
+    resolveProductNoun(mapping?.productTitle || product?.title, product?.type),
+  );
 
   // Only the fields this design says a customer may change.
   //

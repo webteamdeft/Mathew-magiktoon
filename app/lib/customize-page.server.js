@@ -2690,9 +2690,7 @@ const SCRIPT = `
       .then(function (payload) {
         if (!payload || !payload.ok || !payload.mockup) {
           setError(
-            (payload && payload.error) ||
-              "We couldn't build the product preview just now. " +
-                "Your design is saved — please try again in a moment."
+            (payload && payload.error) || "Please try ‘Preview on Product’ again."
           );
           return;
         }
@@ -2722,10 +2720,7 @@ const SCRIPT = `
       })
       .catch(function (error) {
         console.error("[magiktoon] preview failed", error);
-        setError(
-          "We couldn't build the product preview just now. " +
-            "Your design is saved — please try again in a moment."
-        );
+        setError("Please try ‘Preview on Product’ again.");
       })
       .finally(function () {
         state.busy = false;

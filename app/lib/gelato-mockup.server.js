@@ -476,9 +476,7 @@ export async function renderGelatoMockup(
       return {
         ok: false,
         code: "PREVIEW_FAILED",
-        error:
-          "We couldn't build the product preview just now. Your design is saved — " +
-          "please try again in a moment.",
+        error: "Please try ‘Preview on Product’ again.",
         detail: created?.message || created?.error || "Gelato create-from-template failed to return a product ID",
         durationMs: now() - startedAt,
       };

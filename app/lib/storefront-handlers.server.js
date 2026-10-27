@@ -639,7 +639,7 @@ export async function storefrontMockupAction({ request }) {
           jobEntry.payload = {
             ok: false,
             code: result.code || "PREVIEW_FAILED",
-            error: result.error || "We couldn't build the product preview just now. Your design is saved — please try again in a moment.",
+            error: result.error || "Please try ‘Preview on Product’ again.",
           };
           return jobEntry.payload;
         }
@@ -671,7 +671,7 @@ export async function storefrontMockupAction({ request }) {
         jobEntry.payload = {
           ok: false,
           code: "PREVIEW_FAILED",
-          error: "We couldn't build the product preview just now. Your design is saved — please try again in a moment.",
+          error: "Please try ‘Preview on Product’ again.",
         };
         return jobEntry.payload;
       }

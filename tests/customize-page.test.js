@@ -111,8 +111,12 @@ test("the four steps of the approved design are all present", () => {
 
   // Shopify's product type supplies the noun, so the heading reads as the
   // design does rather than repeating the whole product title.
-  assert.ok(html.includes("Customize Your Mug"));
-  assert.ok(html.includes("Add your own design or text to make it unique"));
+  assert.ok(html.includes("Personalise Your Mug"));
+  assert.ok(
+    html.includes(
+      "Upload a photo, add your words, and see it on the product before you buy",
+    ),
+  );
 });
 
 test("one text input is rendered per Gelato text area", () => {
@@ -147,7 +151,7 @@ test("a design with no text areas omits Step 2 entirely", () => {
 });
 
 test("the heading falls back to the product title with no product type", () => {
-  assert.ok(render().includes("Customize Your Classic Mug"));
+  assert.ok(render().includes("Personalise Your Classic Mug"));
 });
 
 test("steps 3 and 4 render disabled, as the design shows them", () => {

@@ -84,12 +84,50 @@ const IMAGE_WIDTHS = [160, 240, 320, 480, 640, 1024];
  * ids are part of the key so that changing either one is simply a different
  * entry, and the new images appear immediately.
  */
-export function previewCacheKey(mapping) {
+export function previewCacheKey(mapping, variantId = "") {
   return [
     toTrimmedString(mapping?.id),
     toTrimmedString(mapping?.gelatoTemplateId),
     toTrimmedString(mapping?.gelatoProductId),
+    // Each variant now resolves to its own gallery, so they cannot share an
+    // entry: without this the first colourway asked for would be served to
+    // every other one until the entry expired.
+    toTrimmedString(variantId),
   ].join("|");
+}
+
+/**
+ * The gallery shots that belong to one Shopify variant.
+ *
+ * Gelato returns every colourway's photos in a single flat list and marks each
+ * with the variant(s) it was shot for. A shot carrying no variant at all was
+ * attached to the product as a whole, so it is kept for every variant — that
+ * is also what preserves the extra angles a merchant uploads once rather than
+ * per colour.
+ *
+ * An unknown variant, or one with no shots of its own, keeps the whole gallery
+ * rather than returning nothing: a wrong-coloured preview is poor, but no
+ * preview at all is worse.
+ */
+export function imagesForVariant(images, variants, variantId) {
+  const wanted = toTrimmedString(variantId);
+
+  if (!wanted) return images;
+
+  const variant = asArray(variants).find(
+    (candidate) => toTrimmedString(candidate?.externalId) === wanted,
+  );
+
+  if (!variant?.id) return images;
+
+  const matching = asArray(images).filter((image) => {
+    const ids = asArray(image?.variantIds);
+
+    return ids.length === 0 || ids.includes(variant.id);
+  });
+
+  // Every shot is attributed, and none of them to this variant.
+  return matching.length > 0 ? matching : images;
 }
 
 /**
@@ -234,6 +272,10 @@ export async function resolveTemplateImages(
   mapping,
   {
     now = Date.now,
+    // The Shopify variant the shopper is actually buying. Supplied, the
+    // gallery is narrowed to that colourway; omitted, the whole gallery is
+    // used exactly as before.
+    variantId = "",
     // Injected so the gallery ordering can be tested without the live API.
     loadStoreProduct = getGelatoStoreProduct,
     findStoreProduct = findStoreProductFor,
@@ -244,7 +286,7 @@ export async function resolveTemplateImages(
     return [];
   }
 
-  const key = previewCacheKey(mapping);
+  const key = previewCacheKey(mapping, variantId);
   const cached = cache.get(key);
 
   if (cached && cached.expiresAt > now()) {
@@ -294,13 +336,23 @@ export async function resolveTemplateImages(
       // `productImages[].fileUrl` onto `images[].url`, dropped entries with no
       // file, and sorted the primary shot first. Reading the raw field names
       // here finds nothing.
-      for (const image of asArray(product?.images)) {
+      for (const image of imagesForVariant(
+        asArray(product?.images),
+        product?.variants,
+        variantId,
+      )) {
         add(image.url);
       }
 
       hasGallery = urls.length > 0;
 
-      add(product?.previewUrl);
+      // The product's own preview is a render of whichever colourway Gelato
+      // made primary. Appending it to a gallery that has already been narrowed
+      // to the shopper's variant puts the wrong colour back in the strip, so
+      // it stays a fallback for when the narrowing found nothing.
+      if (!(variantId && hasGallery)) {
+        add(product?.previewUrl);
+      }
     } catch (error) {
       console.error("[gelato-preview] store product lookup failed:", error);
     }

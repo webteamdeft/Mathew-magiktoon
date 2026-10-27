@@ -38,6 +38,22 @@ const GELATO_ECOMMERCE_API = "https://ecommerce.gelatoapis.com/v1";
 const RENDER_TIMEOUT_MS = 60000;
 
 /**
+ * How long to keep polling after the gallery last grew.
+ *
+ * Gelato publishes its mockups one at a time, so "an image exists" is not "the
+ * render has finished": the first angle landed at 83s in production while the
+ * others were still rendering. Waiting is bounded by how long the count has
+ * been STILL rather than by a fixed deadline, so a design that will only ever
+ * have one mockup costs one settle window instead of the whole budget.
+ *
+ * The shorter window applies once Gelato reports a terminal status, which is
+ * good evidence nothing further is coming. These are starting values: nothing
+ * yet measures how long Gelato takes between its first and third image.
+ */
+const GALLERY_GROW_MS = 30000;
+const GALLERY_SETTLE_MS = 10000;
+
+/**
  * Statuses that mean Gelato has given up.
  *
  * Reaching one is final: continuing to poll for a preview that will never come
@@ -460,7 +476,9 @@ export async function renderGelatoMockup(
       return {
         ok: false,
         code: "PREVIEW_FAILED",
-        error: "The preview could not be created. Please try again.",
+        error:
+          "We couldn't build the product preview just now. Your design is saved — " +
+          "please try again in a moment.",
         detail: created?.message || created?.error || "Gelato create-from-template failed to return a product ID",
         durationMs: now() - startedAt,
       };
@@ -479,7 +497,20 @@ export async function renderGelatoMockup(
     let latestProduct = null;
     let firstSawPreviewAt = 0;
     let pollCount = 0;
-    const targetMockupCount = Math.min(3, Math.max(1, Number(mapping?.gelatoImageCount) || 3));
+    // `gelatoImageCount` is recorded when the merchant SAVES the mapping, which
+    // is before Gelato has rendered anything — so it is almost always 1, and
+    // nothing updates it afterwards. Trusting it made this loop stop at the
+    // first image of every render: one angle in the slider, no thumbnails to
+    // cycle, and the "standard mockups are missing" report. A count above 1 was
+    // set deliberately and is honoured; 1 or absent means "not yet known", and
+    // the renderer aims for the three angles it can actually use.
+    const storedImageCount = Number(mapping?.gelatoImageCount) || 0;
+    const targetMockupCount = storedImageCount > 1 ? Math.min(3, storedImageCount) : 3;
+
+    // When the gallery last gained an image, so a stalled render is told apart
+    // from a slow one.
+    let lastGrowthAt = 0;
+    let seenImageCount = 0;
 
     while (now() - startedAt < timeoutMs) {
       await wait(POLL_INTERVAL_MS);
@@ -509,6 +540,11 @@ export async function renderGelatoMockup(
         firstSawPreviewAt = now();
       }
 
+      if (images.length > seenImageCount) {
+        seenImageCount = images.length;
+        lastGrowthAt = now();
+      }
+
       const status = toTrimmedString(product?.status).toLowerCase();
       const elapsedSec = Math.round((now() - startedAt) / 1000);
 
@@ -527,15 +563,21 @@ export async function renderGelatoMockup(
         break;
       }
 
-      // If Gelato fully finished publishing and produced images, break
-      if ((images.length > 0 || previewUrl) && (status === "active" || status === "completed")) {
-        console.log(`[MOCKUP-STEP 4/5] 🎯 Gelato status is '${status}' with ${images.length} images!`);
+      // Short of the target, so the question is whether more are still coming.
+      // Both exits below wait on the gallery having STOPPED growing rather than
+      // on a deadline from the first image: the old rule gave Gelato ten
+      // seconds from the first mockup to produce the rest, which on an
+      // eighty-second render was never long enough for the second and third.
+      const terminal = status === "active" || status === "completed";
+      const stillFor = now() - (lastGrowthAt || firstSawPreviewAt);
+
+      if ((images.length > 0 || previewUrl) && terminal && stillFor >= GALLERY_SETTLE_MS) {
+        console.log(`[MOCKUP-STEP 4/5] 🎯 Gelato status is '${status}' with ${images.length} images and the gallery has settled!`);
         break;
       }
 
-      // If we have at least one preview and 10s have passed, proceed
-      if (firstSawPreviewAt && (images.length > 0 || previewUrl) && now() - firstSawPreviewAt >= 10000) {
-        console.log(`[MOCKUP-STEP 4/5] 🎯 Preview found, proceeding to download.`);
+      if (firstSawPreviewAt && (images.length > 0 || previewUrl) && stillFor >= GALLERY_GROW_MS) {
+        console.log(`[MOCKUP-STEP 4/5] 🎯 Gallery stopped growing at ${images.length} image(s), proceeding to download.`);
         break;
       }
 

@@ -84,6 +84,9 @@ export function normalizeGelatoVariant(variant) {
       "Default variant",
     ),
     productUid: firstString(variant?.productUid, variant?.product_uid),
+    // The Shopify variant Gelato published this colourway as. It is the only
+    // link from the variant a shopper picked back to Gelato's own gallery.
+    externalId: firstString(variant?.externalId, variant?.external_id),
     templateVariantId: firstString(
       variant?.templateVariantId,
       variant?.template_variant_id,
@@ -173,6 +176,14 @@ export function normalizeGelatoStoreProduct(product) {
         id: firstString(image?.id),
         url: firstString(image?.fileUrl, image?.url),
         isPrimary: Boolean(image?.isPrimary),
+        // Which colourways this shot belongs to. Gelato's gallery holds every
+        // variant's photos in one flat list, so without this a white mug can
+        // be previewed on a pink body. An empty array means the merchant
+        // attached the shot to the product rather than to one variant, and it
+        // is then valid for all of them.
+        variantIds: asArray(image?.productVariantIds)
+          .map((id) => firstString(id))
+          .filter(Boolean),
       }))
       .filter((image) => image.url)
       // Primary first, original order otherwise.

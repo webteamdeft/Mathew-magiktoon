@@ -172,3 +172,95 @@ test("a real gallery is still cached, so pages do not re-ask Gelato", async () =
 
   assert.deepEqual(again, ["https://cdn/a.jpg"]);
 });
+
+/**
+ * The gallery narrowed to the colourway being bought.
+ *
+ * Reported from end-to-end testing: choosing the white mug produced previews
+ * of a pink one. Gelato returns every colourway's shots in a single flat list
+ * and the resolver handed all of them on, so the wrap renderer — which takes
+ * the first shot of each angle — picked whichever colour Gelato had made
+ * primary. Each shot carries the variant(s) it was taken for, and a Gelato
+ * variant carries the Shopify variant id it was published as, which is the
+ * link back to what the shopper actually selected.
+ */
+
+/** As above, but with the variant attribution the narrowing needs. */
+function variantDeps({ images = [], variants = [], productPreview = "" } = {}) {
+  return {
+    loadStoreProduct: async () => ({ images, variants, previewUrl: productPreview }),
+    findStoreProduct: async () => null,
+    loadTemplateDetail: async () => ({ template: {} }),
+  };
+}
+
+const VARIANTS = [
+  { id: "gel_pink", externalId: "111", title: "Ceramic Pink" },
+  { id: "gel_white", externalId: "222", title: "Ceramic White" },
+];
+
+const GALLERY = [
+  { url: "https://cdn/pink.jpg", variantIds: ["gel_pink"] },
+  { url: "https://cdn/white.jpg", variantIds: ["gel_white"] },
+  { url: "https://cdn/any-angle.jpg", variantIds: [] },
+];
+
+test("the gallery is narrowed to the Shopify variant being bought", async () => {
+  const urls = await resolveTemplateImages(mapping(), {
+    ...variantDeps({ images: GALLERY, variants: VARIANTS }),
+    variantId: "222",
+  });
+
+  // The white shot, plus the angle attached to the product rather than to one
+  // colour. The pink shot is what used to leak through.
+  assert.deepEqual(urls, ["https://cdn/white.jpg", "https://cdn/any-angle.jpg"]);
+});
+
+test("no variant asked for keeps the whole gallery, as before", async () => {
+  const urls = await resolveTemplateImages(
+    mapping(),
+    variantDeps({ images: GALLERY, variants: VARIANTS }),
+  );
+
+  assert.equal(urls.length, 3);
+});
+
+test("a variant Gelato has no shots for keeps the whole gallery", async () => {
+  // Better a preview in the wrong colour than no preview at all.
+  const urls = await resolveTemplateImages(mapping(), {
+    ...variantDeps({
+      images: [{ url: "https://cdn/pink.jpg", variantIds: ["gel_pink"] }],
+      variants: VARIANTS,
+    }),
+    variantId: "222",
+  });
+
+  assert.deepEqual(urls, ["https://cdn/pink.jpg"]);
+});
+
+test("the product's own preview is not appended to a narrowed gallery", async () => {
+  // It renders the primary colourway, so on a narrowed strip it is exactly the
+  // wrong-coloured thumbnail this change exists to remove.
+  const urls = await resolveTemplateImages(mapping(), {
+    ...variantDeps({
+      images: GALLERY,
+      variants: VARIANTS,
+      productPreview: "https://cdn/hero-pink.jpg",
+    }),
+    variantId: "222",
+  });
+
+  assert.ok(!urls.includes("https://cdn/hero-pink.jpg"));
+});
+
+test("two variants of one mapping do not share a cached gallery", async () => {
+  const shared = mapping();
+  const options = variantDeps({ images: GALLERY, variants: VARIANTS });
+
+  const white = await resolveTemplateImages(shared, { ...options, variantId: "222" });
+  const pink = await resolveTemplateImages(shared, { ...options, variantId: "111" });
+
+  assert.ok(white.includes("https://cdn/white.jpg"));
+  assert.ok(pink.includes("https://cdn/pink.jpg"));
+  assert.ok(!pink.includes("https://cdn/white.jpg"));
+});

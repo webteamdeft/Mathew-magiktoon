@@ -578,7 +578,11 @@ export async function storefrontMockupAction({ request }) {
   const sortedText = body?.text && typeof body.text === "object"
     ? Object.keys(body.text).sort().reduce((acc, k) => { acc[k] = body.text[k]; return acc; }, {})
     : {};
-  const jobKey = `${auth.shop}:${mapping.id}:${generationId}:${JSON.stringify(sortedText)}`;
+  // The variant drives which of Gelato's mockup photos the design is wrapped
+  // onto, so it belongs in the key: without it, switching colour returns the
+  // previous colour's preview from cache.
+  const previewVariantId = toTrimmedString(body?.variantId);
+  const jobKey = `${auth.shop}:${mapping.id}:${generationId}:${previewVariantId}:${JSON.stringify(sortedText)}`;
   let job = mockupJobs.get(jobKey);
 
   console.log(`[MOCKUP-ACTION] 📥 Storefront request received for product: ${productId}, generation: ${generationId}`);
@@ -635,7 +639,7 @@ export async function storefrontMockupAction({ request }) {
           jobEntry.payload = {
             ok: false,
             code: result.code || "PREVIEW_FAILED",
-            error: result.error || "The preview could not be created. Please try again.",
+            error: result.error || "We couldn't build the product preview just now. Your design is saved — please try again in a moment.",
           };
           return jobEntry.payload;
         }
@@ -667,7 +671,7 @@ export async function storefrontMockupAction({ request }) {
         jobEntry.payload = {
           ok: false,
           code: "PREVIEW_FAILED",
-          error: "The preview could not be created. Please try again.",
+          error: "We couldn't build the product preview just now. Your design is saved — please try again in a moment.",
         };
         return jobEntry.payload;
       }
@@ -693,6 +697,7 @@ export async function storefrontMockupAction({ request }) {
         mapping,
         artworkKey: log.outputAssetId,
         textValues: body?.text,
+        variantId: previewVariantId,
       }).catch((error) => {
         console.warn("[MOCKUP-ACTION] wrap previews failed:", error?.message);
         return [];

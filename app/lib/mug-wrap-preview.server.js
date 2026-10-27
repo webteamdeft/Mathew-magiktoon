@@ -946,8 +946,12 @@ async function analyseTemplate(mapping, urls, fetchImpl) {
     )
   ).filter(Boolean);
 
-  // Gelato's gallery repeats each angle once per colour variant. The first of
-  // each — the primary colour — is what the merchant selects in Gelato.
+  // One view per angle. The gallery handed in has already been narrowed to the
+  // shopper's own variant where Gelato attributes its shots, so the first of
+  // each angle is that colourway's. Where it could not be narrowed — an
+  // unattributed gallery, or a variant Gelato has no shots for — this is still
+  // the primary colour, and the preview can show a colour the shopper did not
+  // choose. The cure for that is in Gelato: publish each angle per variant.
   const picked = SCENE_ORDER.map((scene) => loaded.find((view) => view.scene === scene)).filter(
     Boolean,
   );
@@ -999,8 +1003,8 @@ async function analyseTemplate(mapping, urls, fetchImpl) {
   return { views, flat, slots, texts };
 }
 
-async function analysisFor(mapping, { loadImages, fetchImpl }) {
-  const urls = asArray(await loadImages(mapping)).slice(0, 12);
+async function analysisFor(mapping, { loadImages, fetchImpl, variantId = "" }) {
+  const urls = asArray(await loadImages(mapping, { variantId })).slice(0, 12);
   if (urls.length === 0) return null;
 
   const key = `${mapping?.id}|${urls.map((url) => url.split("?")[0]).join("|")}`;
@@ -1221,10 +1225,10 @@ async function projectOntoView(view, changes) {
  *   SCENE_ORDER. Empty when the mockups could not be read.
  */
 export async function renderMugWrapPreviews(
-  { shop, mapping, artworkKey, textValues = {} },
+  { shop, mapping, artworkKey, textValues = {}, variantId = "" },
   { loadImages = resolveTemplateImages, read = readAsset, store = storeAsset, fetchImpl = fetch } = {},
 ) {
-  const analysis = await analysisFor(mapping, { loadImages, fetchImpl });
+  const analysis = await analysisFor(mapping, { loadImages, fetchImpl, variantId });
   if (!analysis || analysis.views.length === 0) return [];
 
   const values = textValues && typeof textValues === "object" ? textValues : {};
@@ -1286,5 +1290,6 @@ export async function analyseMockups(mapping, deps = {}) {
   return analysisFor(mapping, {
     loadImages: deps.loadImages || resolveTemplateImages,
     fetchImpl: deps.fetchImpl || fetch,
+    variantId: deps.variantId || "",
   });
 }

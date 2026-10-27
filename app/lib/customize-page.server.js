@@ -2542,7 +2542,7 @@ const SCRIPT = `
 
     var previewSucceeded = false;
 
-    // The AI artwork from Step 2 and the text from Step 3, exactly as they
+    // The text from Step 2 and the AI artwork from Step 3, exactly as they
     // stand now. Gelato places both on the selected template.
     var sentGenerationId = state.generationId;
     var sentText = readText();
@@ -2550,6 +2550,9 @@ const SCRIPT = `
       productId: DATA.productId,
       mappingId: state.mapping ? state.mapping.mappingId : "",
       generationId: sentGenerationId,
+      // The colourway being bought. The server narrows Gelato's mockup gallery
+      // to it, so a white mug is no longer previewed on a pink body.
+      variantId: DATA.variantId,
       text: sentText
     });
     // A little longer than the server's own render limit, so the server's
@@ -2686,7 +2689,11 @@ const SCRIPT = `
       })
       .then(function (payload) {
         if (!payload || !payload.ok || !payload.mockup) {
-          setError((payload && payload.error) || "The preview could not be created.");
+          setError(
+            (payload && payload.error) ||
+              "We couldn't build the product preview just now. " +
+                "Your design is saved — please try again in a moment."
+          );
           return;
         }
 
@@ -2699,7 +2706,10 @@ const SCRIPT = `
 
         return showMockups(payload, !payload.approximate).then(function (shown) {
           if (!shown) {
-            setError("The preview image could not be loaded. Please try again.");
+            setError(
+              "Your preview was created but the image didn't load. " +
+                "Please try again."
+            );
             return;
           }
 
@@ -2712,7 +2722,10 @@ const SCRIPT = `
       })
       .catch(function (error) {
         console.error("[magiktoon] preview failed", error);
-        setError("The preview could not be created. Please try again.");
+        setError(
+          "We couldn't build the product preview just now. " +
+            "Your design is saved — please try again in a moment."
+        );
       })
       .finally(function () {
         state.busy = false;
@@ -3127,8 +3140,10 @@ export function renderCustomizePage({
       designImage(proxyBase, mapping),
   );
 
-  // "Customize Your Mug" reads better than the full product title. Shopify's
-  // product type supplies the noun; the title is the fallback.
+  // "Personalise Your Mug" reads better than the full product title. Shopify's
+  // product type supplies the noun; the title is the fallback. It is why the
+  // heading must stay templated: hard-coding "Mug" would misname every other
+  // product the app is mapped onto.
   const productNoun =
     escapeHtml(product?.type) || escapeHtml(mapping?.productTitle) || "Product";
 
@@ -3269,8 +3284,10 @@ export function renderCustomizePage({
 
     <div class="mtcp__panel">
       <div class="mtcp__panel-head">
-        <h2 class="mtcp__panel-title">Customize Your ${productNoun}</h2>
-        <p class="mtcp__panel-sub">Add your own design or text to make it unique</p>
+        <h2 class="mtcp__panel-title">Personalise Your ${productNoun}</h2>
+        <p class="mtcp__panel-sub">
+          Upload a photo, add your words, and see it on the product before you buy
+        </p>
       </div>
 
       ${

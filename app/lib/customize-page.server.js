@@ -929,6 +929,11 @@ const STYLES = `
   width: 100%;
 }
 
+/* Centred. Auto margins rather than justify-content, which would push the
+   first thumbnails out of reach when the row is wide enough to scroll. */
+.mtcp__thumb:first-child { margin-left: auto; }
+.mtcp__thumb:last-child { margin-right: auto; }
+
 .mtcp__thumb:hover { border-color: var(--mtc-line); }
 .mtcp__thumb.is-current { border-color: var(--mtc-accent); }
 

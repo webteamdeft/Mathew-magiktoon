@@ -2577,18 +2577,26 @@ const SCRIPT = `
       }).then(function (response) { return response.json(); });
     }
 
+    // When the server is too busy to answer in time, the app proxy returns its
+    // own error page rather than JSON. The render carries on regardless, so
+    // that counts as "still working" and the next poll collects it.
+    function stillWorking() {
+      return { ok: true, pending: true };
+    }
+
     // Gelato renders asynchronously, often for longer than the app proxy will
     // hold a request open. The server keeps the render running and answers
     // "pending"; asking again with the same body collects the same render.
-    function pollLiveRender() {
-      return post(true).then(function (payload) {
-        if (payload && payload.ok && payload.pending) {
+    // With acceptStandIn, the wrapped stand-in views end the wait too.
+    function pollLiveRender(acceptStandIn) {
+      return post(true).catch(stillWorking).then(function (payload) {
+        if (payload && payload.ok && payload.pending && !(acceptStandIn && payload.mockup)) {
           if (Date.now() > pollDeadline || token !== state.mockupToken) {
             return { ok: false, error: "The preview is taking too long. Please try again." };
           }
           return new Promise(function (resolve) {
             window.setTimeout(resolve, 3000);
-          }).then(pollLiveRender);
+          }).then(function () { return pollLiveRender(acceptStandIn); });
         }
         return payload;
       });
@@ -2680,10 +2688,12 @@ const SCRIPT = `
     }
 
     post(false)
+      .catch(stillWorking)
       .then(function (payload) {
-        // No wrapped views for this product: wait for the live render itself.
+        // No preview yet (no wrapped views for this product, or the click went
+        // unanswered): poll until the stand-ins or the live render arrive.
         if (payload && payload.ok && payload.pending && !payload.mockup) {
-          return pollLiveRender();
+          return pollLiveRender(true);
         }
         return payload;
       })

@@ -19,6 +19,7 @@
  * SERVER ONLY.
  */
 
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import sharp from "sharp";
 import { resolveTemplateImages } from "./gelato-preview.server.js";
 import { readAsset, storeAsset } from "./storage.server.js";
@@ -977,7 +978,13 @@ async function analyseTemplate(mapping, urls, fetchImpl) {
 
   const back = views.find((view) => view.scene === "back");
   const sides = views.filter((view) => view !== back);
-  for (const view of sides) calibrateFacing(view, back);
+  // Each step below holds the event loop for seconds on a small instance.
+  // Yielding between them lets the server answer the shopper's polls (and
+  // anyone else) meanwhile, rather than leaving the app proxy to time out.
+  for (const view of sides) {
+    calibrateFacing(view, back);
+    await yieldToEventLoop();
+  }
 
   // Same camera for every angle, so the back's rows curve the same way.
   if (back && sides.length > 0) {
@@ -986,7 +993,9 @@ async function analyseTemplate(mapping, urls, fetchImpl) {
   }
 
   const { flat, seen } = buildFlat(views);
+  await yieldToEventLoop();
   const lum = luminanceOf(flat);
+  await yieldToEventLoop();
 
   // The image placeholder's own shape gives the layer's width.
   const placeholder = asArray(mapping?.layers).find((layer) => layer?.type === "image");
@@ -998,6 +1007,7 @@ async function analyseTemplate(mapping, urls, fetchImpl) {
         : 75.33 / 96;
 
   const slots = findImageSlots(lum, seen, aspect * FLAT_H) || [];
+  await yieldToEventLoop();
   const texts = await locateTexts(lum, seen, slots, asArray(mapping?.gelatoTextPlaceholders));
 
   return { views, flat, slots, texts };
@@ -1011,8 +1021,11 @@ async function analysisFor(mapping, { loadImages, fetchImpl, variantId = "" }) {
   const cached = analysisCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.analysis;
 
-  const analysis = await analyseTemplate(mapping, urls, fetchImpl);
+  // The promise is cached, not the result, so a second click while the first
+  // analysis is still running waits for it instead of starting another.
+  const analysis = analyseTemplate(mapping, urls, fetchImpl);
   analysisCache.set(key, { analysis, expiresAt: Date.now() + ANALYSIS_TTL_MS });
+  analysis.catch(() => analysisCache.delete(key));
   return analysis;
 }
 

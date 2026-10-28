@@ -3378,7 +3378,7 @@ export function renderCustomizePage({
       <div class="mtcp__panel-head">
         <h2 class="mtcp__panel-title">Personalise Your ${productNoun}</h2>
         <p class="mtcp__panel-sub">
-          Upload a photo, add your words, and see it on the product before you buy
+          Upload a photo and add a name to make it one of a kind.
         </p>
       </div>
 

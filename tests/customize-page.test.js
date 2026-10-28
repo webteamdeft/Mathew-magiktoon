@@ -116,9 +116,7 @@ test("the four steps of the approved design are all present", () => {
   // design does rather than repeating the whole product title.
   assert.ok(html.includes("Personalise Your Mug"));
   assert.ok(
-    html.includes(
-      "Upload a photo, add your words, and see it on the product before you buy",
-    ),
+    html.includes("Upload a photo and add a name to make it one of a kind."),
   );
 });
 

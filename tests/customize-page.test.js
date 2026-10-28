@@ -120,6 +120,15 @@ test("the four steps of the approved design are all present", () => {
   );
 });
 
+test("the mockups get a thumbnail row under the main image, hidden until there are some", () => {
+  const html = render();
+
+  assert.ok(html.includes('<div class="mtcp__thumbs" id="mtcp-thumbs" hidden></div>'));
+  // Under the stage, above the zoom controls.
+  assert.ok(html.indexOf('id="mtcp-thumbs"') > html.indexOf('id="mtcp-stage"'));
+  assert.ok(html.indexOf('id="mtcp-thumbs"') < html.indexOf('id="mtcp-zoom-out"'));
+});
+
 test("one text input is rendered per Gelato text area", () => {
   const html = render({
     mapping: {

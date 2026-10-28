@@ -845,13 +845,7 @@ const STYLES = `
 .mtcp__stage.is-viewing { cursor: default; }
 .mtcp__stage.is-viewing .mtcp__area { display: none; }
 
-/*
- * Stepping through the design's other views.
- *
- * Arrows on the image rather than thumbnails under it: twelve tiles wrapped
- * onto two rows, pushed the zoom controls down, and put a grid of small mugs
- * directly beneath a large one.
- */
+/* Stepping through the design's other views. */
 .mtcp__views-nav {
   align-items: center;
   background: rgba(255, 255, 255, 0.92);
@@ -899,6 +893,49 @@ const STYLES = `
 }
 
 .mtcp__views-count[hidden] { display: none; }
+
+/*
+ * The finished mockups as thumbnails under the main image; clicking one shows
+ * it enlarged above. A single row that scrolls sideways: wrapped onto two
+ * rows, a set of twelve pushed the zoom controls down.
+ */
+.mtcp__thumbs {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.mtcp__thumbs[hidden] { display: none; }
+
+.mtcp__thumb {
+  background: var(--mtc-stage);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  height: 72px;
+  overflow: hidden;
+  padding: 0;
+  width: 72px;
+}
+
+.mtcp__thumb img {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.mtcp__thumb:hover { border-color: var(--mtc-line); }
+.mtcp__thumb.is-current { border-color: var(--mtc-accent); }
+
+.mtcp__thumb:focus-visible {
+  outline: 2px solid var(--mtc-accent);
+  outline-offset: 2px;
+}
 
 @media (max-width: 989px) {
   .mtcp { padding: 24px 18px 56px; }
@@ -1109,6 +1146,7 @@ const SCRIPT = `
     viewNext: el("mtcp-view-next"),
     viewCount: el("mtcp-view-count"),
     views: el("mtcp-views"),
+    thumbs: el("mtcp-thumbs"),
     mockupNote: el("mtcp-mockup-note"),
     help: el("mtcp-cart-help"),
     error: el("mtcp-error"),
@@ -2351,6 +2389,7 @@ const SCRIPT = `
       if (ui.viewCount) {
         ui.viewCount.textContent = state.viewIndex + 1 + " / " + views.length;
       }
+      markCurrentThumb();
       return;
     }
 
@@ -2422,7 +2461,54 @@ const SCRIPT = `
     }, 4000);
   }
 
-  /** Build the thumbnail strip, or leave it hidden for a single-image design. */
+  /**
+   * The finished mockups as thumbnails under the main image, or nothing when
+   * there is only one to show.
+   */
+  function renderThumbs(views) {
+    if (!ui.thumbs) return;
+
+    ui.thumbs.textContent = "";
+
+    if (views.length < 2) {
+      hide(ui.thumbs);
+      return;
+    }
+
+    views.forEach(function (view, index) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "mtcp__thumb";
+      button.setAttribute("data-index", String(index));
+      button.setAttribute("aria-label", "Show view " + (index + 1) + " of " + views.length);
+
+      var img = document.createElement("img");
+      img.src = view.url;
+      img.alt = "";
+      img.loading = "lazy";
+
+      button.appendChild(img);
+      ui.thumbs.appendChild(button);
+    });
+
+    show(ui.thumbs);
+    markCurrentThumb();
+  }
+
+  function markCurrentThumb() {
+    if (!ui.thumbs) return;
+
+    Array.prototype.forEach.call(ui.thumbs.children, function (button, index) {
+      var current = index === state.viewIndex;
+      button.classList.toggle("is-current", current);
+      if (current) {
+        button.setAttribute("aria-current", "true");
+      } else {
+        button.removeAttribute("aria-current");
+      }
+    });
+  }
+
   /**
    * Show the stepping controls, if there is more than one view to step through.
    *
@@ -2438,37 +2524,17 @@ const SCRIPT = `
     [ui.viewPrev, ui.viewNext, ui.viewCount].forEach(function (node) {
       if (node) node.hidden = !arrows;
     });
+    renderThumbs(arrows ? views : []);
+
+    // The mockups stay put: the customer picks a view from the thumbnails.
+    stopMockupAutoplay();
 
     if (!many) {
       stopRotating();
-      stopMockupAutoplay();
       return;
     }
 
-    if (state.mockup) {
-      startMockupAutoplay();
-    } else {
-      startRotating();
-    }
-  }
-
-  /**
-   * Step 4's mockups play through on their own, like a slideshow, until the
-   * customer uses the arrows. Stops when the mockups are cleared.
-   */
-  function startMockupAutoplay() {
-    stopMockupAutoplay();
-
-    state.mockupTimer = setInterval(function () {
-      var views = viewsOf();
-
-      if (!state.mockup || views.length < 2) {
-        stopMockupAutoplay();
-        return;
-      }
-
-      showView((state.viewIndex + 1) % views.length);
-    }, 3000);
+    if (!state.mockup) startRotating();
   }
 
   function stopMockupAutoplay() {
@@ -3068,6 +3134,15 @@ const SCRIPT = `
     });
   });
 
+  if (ui.thumbs) {
+    ui.thumbs.addEventListener("click", function (event) {
+      var button = event.target.closest(".mtcp__thumb");
+      if (!button) return;
+      stopRotating();
+      showView(Number(button.getAttribute("data-index")));
+    });
+  }
+
   updateGenerateButton();
   updatePreviewButton();
   renderViews();
@@ -3372,6 +3447,7 @@ export function renderCustomizePage({
         </div>
       </div>
 
+      <div class="mtcp__thumbs" id="mtcp-thumbs" hidden></div>
 
       <div class="mtcp__zoom">
         <button type="button" class="mtcp__zoom-btn" id="mtcp-zoom-out"

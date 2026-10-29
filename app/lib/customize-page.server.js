@@ -2678,10 +2678,9 @@ const SCRIPT = `
       var urls = (payload.mockups || []).map(function (item) { return item.url; });
       if (urls.length === 0) urls = [payload.mockup];
 
-      // The live render leads; the wrapped views stay as extra angles.
-      if (live && state.mockup && state.mockup.approximate) {
-        urls = urls.concat(state.mockup.views);
-      }
+      // The live render replaces the wrapped stand-ins rather than joining
+      // them: kept, every angle appeared twice in the thumbnails, half of them
+      // approximations on Gelato's stock photos.
 
       return new Promise(function (resolve) {
         var resolved = false;

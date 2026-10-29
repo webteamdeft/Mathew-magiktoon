@@ -129,6 +129,12 @@ test("the mockups get a thumbnail row under the main image, hidden until there a
   assert.ok(html.indexOf('id="mtcp-thumbs"') < html.indexOf('id="mtcp-zoom-out"'));
 });
 
+test("Gelato's mockups replace the quick stand-ins instead of being added to them", () => {
+  const html = render();
+
+  assert.ok(!html.includes("urls.concat(state.mockup.views)"));
+});
+
 test("one text input is rendered per Gelato text area", () => {
   const html = render({
     mapping: {

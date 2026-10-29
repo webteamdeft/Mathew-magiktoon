@@ -2,7 +2,7 @@
  * The MagikPik watermark on what the shopper is shown.
  *
  * Two marks, agreed with the client:
- *   - the AI artwork: a faint logo repeated diagonally across it, so it cannot
+ *   - the AI artwork: a faint black logo repeated diagonally across it, so it cannot
  *     be cropped off a screenshot;
  *   - the product previews: one small logo in a corner, so the mug still looks
  *     clean.
@@ -28,7 +28,7 @@ export const WATERMARK_LOGO_PATH = path.resolve(
   "..",
   "assets",
   "watermark",
-  "magikpik-white.png",
+  "magikpik-black.png",
 );
 
 /** The artwork shown on screen is a copy; this wide is plenty for a preview. */
@@ -60,16 +60,16 @@ async function logoAt(width, opacity) {
 }
 
 /**
- * A soft dark copy of the logo, laid under the white one so the mark still
- * shows on white mugs and pale artwork.
+ * A soft light copy of the logo, laid under the black one so the mark still
+ * shows on dark artwork and dark mugs.
  */
-async function shadowOf(logo, opacity, blur) {
+async function glowOf(logo, opacity, blur) {
   const { data, info } = await sharp(logo).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 
   for (let i = 0; i < data.length; i += 4) {
-    data[i] = 0;
-    data[i + 1] = 0;
-    data[i + 2] = 0;
+    data[i] = 255;
+    data[i + 1] = 255;
+    data[i + 2] = 255;
     data[i + 3] = Math.round(data[i + 3] * opacity);
   }
 
@@ -93,8 +93,8 @@ export async function watermarkArtworkDataUrl(buffer) {
     // One tile: the logo with space round it, tilted. Repeating the tile
     // covers the image whatever its shape.
     const logoWidth = width * 0.3;
-    const logo = await logoAt(logoWidth, 0.22);
-    const shadow = await shadowOf(logo, 0.35, 2);
+    const logo = await logoAt(logoWidth, 0.45);
+    const glow = await glowOf(logo, 0.9, 2);
     const logoHeight = (await sharp(logo).metadata()).height;
 
     const tileWidth = Math.round(logoWidth * 1.6);
@@ -106,7 +106,7 @@ export async function watermarkArtworkDataUrl(buffer) {
       create: { width: tileWidth, height: tileHeight, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
     })
       .composite([
-        { input: shadow, left: left + 2, top: top + 2 },
+        { input: glow, left, top },
         { input: logo, left, top },
       ])
       .png()
@@ -140,14 +140,14 @@ export async function markPreviewCorner(buffer) {
     if (!width || !height) return buffer;
 
     const logo = await logoAt(width * 0.16, 0.85);
-    const shadow = await shadowOf(logo, 0.6, 3);
+    const glow = await glowOf(logo, 0.8, 4);
     const { width: logoWidth, height: logoHeight } = await sharp(logo).metadata();
     const margin = Math.round(width * 0.03);
     const left = Math.max(0, width - logoWidth - margin);
     const top = Math.max(0, height - logoHeight - margin);
 
     const marked = image.composite([
-      { input: shadow, left: Math.min(left + 2, width - logoWidth), top: Math.min(top + 2, height - logoHeight) },
+      { input: glow, left, top },
       { input: logo, left, top },
     ]);
 

@@ -23,6 +23,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import sharp from "sharp";
 import prisma from "../db.server.js";
 import {
   authenticateStorefrontRequest,
@@ -35,7 +36,8 @@ import {
   toStorefrontMapping,
 } from "./mappings.server.js";
 import { fixedImageLayers } from "./layers.js";
-import { readAsset } from "./storage.server.js";
+import { readAsset, storeAsset } from "./storage.server.js";
+import { markPreviewCorner, watermarkArtworkDataUrl } from "./watermark.server.js";
 import { getCustomization, saveCustomization, storeImage } from "./customizations.server.js";
 import { generateArtwork } from "./generation.server.js";
 import { renderGelatoMockup } from "./gelato-mockup.server.js";
@@ -199,10 +201,26 @@ export async function storefrontCustomizationAction({ request }) {
     );
   }
 
+  // AI artwork is shown to the shopper watermarked, so the copy the page sends
+  // back must not be printed. The clean one stored with the generation is.
+  let artworkDataUrl = body?.artwork;
+  const generationId = toTrimmedString(body?.generationId);
+
+  if (generationId) {
+    artworkDataUrl = await cleanGeneratedArtwork(auth.shop, generationId);
+
+    if (!artworkDataUrl) {
+      return storefrontJson(
+        { ok: false, error: "That artwork is no longer available. Please generate again." },
+        { status: 404 },
+      );
+    }
+  }
+
   const result = await saveCustomization({
     shop: auth.shop,
     mapping,
-    artworkDataUrl: body?.artwork,
+    artworkDataUrl,
     previewDataUrl: body?.preview,
     // The approved design lets the customer drag to move and +/- to zoom, so
     // their placement is accepted here — clamped server-side, never trusted raw.
@@ -228,6 +246,31 @@ export async function storefrontCustomizationAction({ request }) {
     previewUrl: result.customization.previewUrl || "",
     properties: result.properties,
   });
+}
+
+/** The unwatermarked artwork stored with a generation, as a data URL. */
+async function cleanGeneratedArtwork(shop, generationId) {
+  const log = await prisma.generationLog.findFirst({
+    where: { id: generationId, shop },
+    select: { outputAssetId: true },
+  });
+
+  if (!log?.outputAssetId) return "";
+
+  try {
+    const buffer = await readAsset(log.outputAssetId);
+    const { format } = await sharp(buffer).metadata();
+    const mimeType = format === "jpeg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png";
+    return `data:${mimeType};base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.error("[customization] stored artwork could not be read:", error?.message);
+    return "";
+  }
+}
+
+/** Stores a shopper-facing preview with the MagikPik mark in its corner. */
+async function storeMarkedPreview(buffer, options) {
+  return storeAsset(await markPreviewCorner(buffer), options);
 }
 
 /**
@@ -322,9 +365,15 @@ export async function storefrontGenerateAction({ request }) {
     );
   }
 
+  // The shopper sees a watermarked copy. The clean artwork is already stored
+  // against the generation, and that stored copy is what the cart saves.
+  const shownArtwork = await watermarkArtworkDataUrl(
+    Buffer.from(String(result.artwork).split(",")[1] || "", "base64"),
+  );
+
   return storefrontJson({
     ok: true,
-    artwork: result.artwork,
+    artwork: shownArtwork || result.artwork,
     generationId: result.generationId,
     durationMs: result.durationMs,
     resolution: result.resolution,
@@ -628,7 +677,7 @@ export async function storefrontMockupAction({ request }) {
           // the app proxy's request timeout. Gelato usually needs one to two
           // minutes; giving up sooner deletes a render that was nearly done.
           timeoutMs: 300000,
-        });
+        }, { store: storeMarkedPreview });
 
         // This job is only ever Gelato's own render; the wrapped stand-ins are
         // served separately and never presented as the live result.
@@ -698,7 +747,7 @@ export async function storefrontMockupAction({ request }) {
         artworkKey: log.outputAssetId,
         textValues: body?.text,
         variantId: previewVariantId,
-      }).catch((error) => {
+      }, { store: storeMarkedPreview }).catch((error) => {
         console.warn("[MOCKUP-ACTION] wrap previews failed:", error?.message);
         return [];
       });

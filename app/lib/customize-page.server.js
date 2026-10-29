@@ -2917,6 +2917,9 @@ const SCRIPT = `
             // The Gelato design applied to it — reference only.
             mappingId: state.mapping && state.mapping.mappingId,
             artwork: (state.generated && state.image && state.image.src) || artwork.dataUrl,
+            // AI artwork is shown watermarked; with this the server saves the
+            // clean copy stored with the generation instead of the one above.
+            generationId: state.generated ? state.generationId : "",
             preview: previewDataUrl,
             placement: state.placement,
             text: readText(),

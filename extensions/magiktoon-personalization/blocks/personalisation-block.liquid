@@ -65,10 +65,21 @@
       <div class="mtc__details">
         <h1 class="mtc__product-title">{{ product.title }}</h1>
 
+        {%- comment -%}
+          A short summary beside the price; the full description is shown once,
+          under "Product details" at the end of this block. The summary is the
+          product's custom.summary metafield when there is one, otherwise the
+          description's first paragraph.
+        {%- endcomment -%}
         {%- if block.settings.show_description and product.description != blank -%}
-          <div class="mtc__product-description">
-            {{ product.description | strip_html | truncatewords: 45 }}
-          </div>
+          {%- assign summary = product.metafields.custom.summary.value -%}
+          {%- if summary == blank -%}
+            {%- assign summary = product.description | split: '</p>' | first | strip_html | strip -%}
+            {%- if summary == blank -%}
+              {%- assign summary = product.description | strip_html -%}
+            {%- endif -%}
+          {%- endif -%}
+          <p class="mtc__product-description">{{ summary | strip_html | truncatewords: 40 }}</p>
         {%- endif -%}
 
         {%- if block.settings.show_price -%}
@@ -208,6 +219,19 @@
     </p>
 
     <p class="mtc__notice" data-mtc-guard hidden></p>
+
+    {%- comment -%}
+      The full description, once, in a closed section of readable width. Turn
+      off the theme's own description block so it isn't shown twice.
+    {%- endcomment -%}
+    {%- if block.settings.show_full_description and product.description != blank -%}
+      <details class="mtc__product-details">
+        <summary class="mtc__product-details-title">
+          {{ block.settings.full_description_label | default: 'Product details' }}
+        </summary>
+        <div class="mtc__product-details-body">{{ product.description }}</div>
+      </details>
+    {%- endif -%}
   </section>
 
   {%- comment -%}
@@ -298,8 +322,22 @@
     {
       "type": "checkbox",
       "id": "show_description",
-      "label": "Show the description",
+      "label": "Show a short summary",
+      "info": "The product's custom.summary metafield, or the description's first paragraph.",
       "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_full_description",
+      "label": "Show the full description under Product details",
+      "info": "Turn off the theme's own description block so it isn't shown twice.",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "full_description_label",
+      "label": "Product details heading",
+      "default": "Product details"
     },
     {
       "type": "checkbox",

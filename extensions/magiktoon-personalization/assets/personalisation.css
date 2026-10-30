@@ -275,7 +275,32 @@
   color: var(--mtc-body);
   font-size: 15px;
   line-height: 1.6;
+  margin: 0;
 }
+
+/* The full description: closed by default, at a readable width. */
+.mtc__product-details {
+  border-top: 1px solid var(--mtc-border);
+  max-width: 70ch;
+  padding-top: 12px;
+}
+
+.mtc__product-details-title {
+  color: var(--mtc-ink);
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mtc__product-details-body {
+  color: var(--mtc-body);
+  font-size: 15px;
+  line-height: 1.6;
+  padding-top: 8px;
+}
+
+.mtc__product-details-body > :first-child { margin-top: 0; }
+.mtc__product-details-body > :last-child { margin-bottom: 0; }
 
 .mtc__price {
   align-items: baseline;

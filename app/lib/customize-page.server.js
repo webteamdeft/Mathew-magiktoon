@@ -3359,6 +3359,11 @@ export function renderCustomizePage({
       ? mapping.textPlaceholders
       : [];
 
+  // A design with no editable text has no text step, and the steps after it
+  // move up rather than leaving a gap in the numbering.
+  const generateStep = textAreas.length > 0 ? 3 : 2;
+  const previewStep = generateStep + 1;
+
   const variantTitle = escapeHtml(product?.variantTitle);
   const productPrice = escapeHtml(product?.price);
   const templateName = escapeHtml(mapping?.templateName);
@@ -3562,7 +3567,7 @@ export function renderCustomizePage({
         then vanish.
       */ ""}
       <section class="mtcp__step">
-        <h3 class="mtcp__step-title">Step 3. Generate Your Artwork</h3>
+        <h3 class="mtcp__step-title">Step ${generateStep}. Generate Your Artwork</h3>
 
         <button type="button" class="mtcp__btn mtcp__btn--primary mtcp__btn--auto"
                 id="mtcp-generate" disabled hidden>Generate</button>
@@ -3617,7 +3622,7 @@ export function renderCustomizePage({
       </section>
 
       <section class="mtcp__step">
-        <h3 class="mtcp__step-title">Step 4. Preview On The Product</h3>
+        <h3 class="mtcp__step-title">Step ${previewStep}. Preview On The Product</h3>
 
         <button type="button" class="mtcp__btn mtcp__btn--outline mtcp__btn--auto"
                 id="mtcp-preview" disabled hidden>Preview on Product</button>

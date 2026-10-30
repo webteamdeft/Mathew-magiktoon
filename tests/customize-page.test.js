@@ -161,6 +161,11 @@ test("a design with no text areas omits Step 2 entirely", () => {
 
   assert.equal(html.includes("Step 2. Add Your Text"), false);
 
+  // The steps after it move up, so the numbering has no gap.
+  assert.ok(html.includes("Step 2. Generate Your Artwork"));
+  assert.ok(html.includes("Step 3. Preview On The Product"));
+  assert.equal(html.includes("Step 4."), false);
+
   // The page script always contains the `[data-mtcp-text]` selector, so assert
   // on rendered inputs rather than on the raw string appearing anywhere.
   assert.equal((html.match(/<input[^>]*data-mtcp-text[^>]*>/g) || []).length, 0);

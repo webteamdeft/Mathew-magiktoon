@@ -275,55 +275,16 @@
   color: var(--mtc-body);
   font-size: 15px;
   line-height: 1.6;
-  margin: 0;
 }
 
-/* The full description: closed by default, at a readable width. */
-.mtc__product-details {
-  border-top: 1px solid var(--mtc-border);
-  max-width: 70ch;
-  padding-top: 12px;
-}
+.mtc__product-description p,
+.mtc__product-description ul,
+.mtc__product-description ol { margin: 0 0 10px; }
 
-.mtc__read-more {
-  color: var(--mtc-accent);
-  font-weight: 600;
-  text-decoration: underline;
-  white-space: nowrap;
-}
+.mtc__product-description ul,
+.mtc__product-description ol { padding-left: 20px; }
 
-/* A + / − sign so the heading reads as something to open. */
-.mtc__product-details-title {
-  align-items: center;
-  color: var(--mtc-ink);
-  cursor: pointer;
-  display: flex;
-  font-size: 15px;
-  font-weight: 600;
-  justify-content: space-between;
-  list-style: none;
-}
-
-.mtc__product-details-title::-webkit-details-marker { display: none; }
-
-.mtc__product-details-title::after {
-  content: "+";
-  font-size: 20px;
-  font-weight: 400;
-  line-height: 1;
-}
-
-.mtc__product-details[open] .mtc__product-details-title::after { content: "\2212"; }
-
-.mtc__product-details-body {
-  color: var(--mtc-body);
-  font-size: 15px;
-  line-height: 1.6;
-  padding-top: 8px;
-}
-
-.mtc__product-details-body > :first-child { margin-top: 0; }
-.mtc__product-details-body > :last-child { margin-bottom: 0; }
+.mtc__product-description > :last-child { margin-bottom: 0; }
 
 .mtc__price {
   align-items: baseline;

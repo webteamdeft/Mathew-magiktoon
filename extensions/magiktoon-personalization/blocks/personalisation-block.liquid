@@ -79,7 +79,24 @@
               {%- assign summary = product.description | strip_html -%}
             {%- endif -%}
           {%- endif -%}
-          <p class="mtc__product-description">{{ summary | strip_html | truncatewords: 40 }}</p>
+          {%- assign summary = summary | strip_html | strip -%}
+          {%- assign summary_words = summary | split: ' ' | size -%}
+          <p class="mtc__product-description">
+            {%- if summary_words > 40 -%}
+              {%- assign cut = summary | truncatewords: 40, '' | strip -%}
+              {%- assign last = cut | slice: -1 -%}
+              {%- if last == '.' or last == ',' or last == ';' or last == ':' -%}
+                {%- assign cut_size = cut | size | minus: 1 -%}
+                {%- assign cut = cut | slice: 0, cut_size -%}
+              {%- endif -%}
+              {{ cut }}…
+            {%- else -%}
+              {{ summary }}
+            {%- endif -%}
+            {%- if block.settings.show_full_description -%}
+              {{ ' ' }}<a class="mtc__read-more" href="#mtc-details-{{ block.id }}" data-mtc-read-more>Read more</a>
+            {%- endif -%}
+          </p>
         {%- endif -%}
 
         {%- if block.settings.show_price -%}
@@ -225,7 +242,7 @@
       off the theme's own description block so it isn't shown twice.
     {%- endcomment -%}
     {%- if block.settings.show_full_description and product.description != blank -%}
-      <details class="mtc__product-details">
+      <details class="mtc__product-details" id="mtc-details-{{ block.id }}" data-mtc-product-details>
         <summary class="mtc__product-details-title">
           {{ block.settings.full_description_label | default: 'Product details' }}
         </summary>

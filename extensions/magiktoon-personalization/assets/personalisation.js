@@ -607,11 +607,25 @@
     });
   };
 
+  /** "Read more" after the summary opens Product details and scrolls to it. */
+  function bindReadMore(root) {
+    var link = query(root, "[data-mtc-read-more]");
+    var details = query(root, "[data-mtc-product-details]");
+    if (!link || !details) return;
+
+    link.addEventListener("click", function (event) {
+      event.preventDefault();
+      details.open = true;
+      details.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   function init() {
     queryAll(document, "[data-mtc-root]").forEach(function (root) {
       if (root.dataset.mtcReady === "true") return;
 
       root.dataset.mtcReady = "true";
+      bindReadMore(root);
 
       var block = new Block(root);
       block.bindVariants();
